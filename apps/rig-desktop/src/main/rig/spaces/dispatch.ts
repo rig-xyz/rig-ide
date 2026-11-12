@@ -2029,7 +2029,25 @@ export function createSpacesDispatcher(deps: {
       stopRequested.add(runId);
       return true;
     }
-    return bindingId && startedHere(runId) ? closeOutStaleRun(bindingId, runId) : false;
+    if (!bindingId) return false;
+    if (startedHere(runId)) return closeOutStaleRun(bindingId, runId);
+    // Not one this app knows it started (another Mac, an older install, an in-flight record
+    // lost), and the relay has heard nothing from it for longer than any working run goes
+    // quiet: its owner asked to end it, and nothing else ever will.
+    return (await quietOnRelay(bindingId, runId)) ? closeOutStaleRun(bindingId, runId) : false;
+  }
+
+  /**
+   * Whether the relay has heard nothing from a run for `RUN_STALL_MS`: no event
+   * stored since then (or none at all, and it started before then). False when
+   * the relay can't be read: a run is never ended on a guess.
+   */
+  async function quietOnRelay(bindingId: string, runId: string, now = Date.now()): Promise<boolean> {
+    const read = await deps.api.getSessionEvents(bindingId, runId, 0);
+    if (!read.success) return false;
+    const times = [read.data.run.startedAt, ...read.data.events.map((e) => e.createdAt)].map((t) => Date.parse(t)).filter(Number.isFinite);
+    if (!times.length) return false;
+    return now - Math.max(...times) >= RUN_STALL_MS;
   }
 
   /**

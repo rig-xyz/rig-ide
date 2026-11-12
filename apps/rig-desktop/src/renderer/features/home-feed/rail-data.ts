@@ -1,4 +1,5 @@
 import { relativeTime } from '@renderer/features/chat/session-history';
+import { quietFor, runLiveness } from '@renderer/features/spaces/run-liveness';
 import type { RigSpaceRunningItem, RigSpaceStatus } from '@shared/rig/space-status';
 import type { Person, RailSession, RailSpace } from './model';
 
@@ -57,13 +58,40 @@ export function runToSession(
   const owner = mine ? undefined : (run.ownerName ?? undefined);
   const who = owner ? `${owner}'s ${agentName(run.agent)}` : agentName(run.agent);
   const waiting = run.activity === 'waiting';
+  const ago = relativeTime(Date.parse(run.startedAt) || now, now).replace(/ ago$/, '');
+  // Still "running" on the relay, but quiet past any working run (`run-liveness.ts`): never "Thinking" for days.
+  const heard = run.lastEventAt ? Date.parse(run.lastEventAt) : NaN;
+  const liveness = runLiveness(
+    {
+      status: 'running',
+      startedAt: run.startedAt,
+      lastEventAt: Number.isFinite(heard) ? heard : null,
+      // Waiting: its latest event is the ask, so it was asked then (or, unknown, since it started).
+      pendingSince: waiting ? (Number.isFinite(heard) ? heard : Date.parse(run.startedAt) || now) : null,
+    },
+    now
+  );
+  if (liveness?.kind === 'stalled') {
+    const quiet = quietFor(liveness.since, now);
+    const text = `Stalled · ${quiet}`;
+    return {
+      id: `run:${run.runId}`,
+      spaceId,
+      name: run.title?.trim() || `${agentName(run.agent)} session`,
+      state: 'paused',
+      short: text,
+      summary: `${who} hasn't sent anything for ${quiet}: nothing is running it now.${mine ? ' Open it to end it or ask again.' : ''}`,
+      last: { who, text, ago: quiet },
+      steps: [{ text: `${who} started this session` }, { text, ago: quiet }],
+      owner,
+      origin: 'real',
+    };
+  }
+  const staleFor = liveness?.kind === 'waiting' && liveness.stale ? quietFor(liveness.since, now) : null;
   const state = waiting ? (mine ? 'needs_you' : 'waiting_on_person') : 'running';
   const doing = waiting
-    ? mine
-      ? 'Needs you'
-      : `Waiting on ${owner ?? 'someone'}`
+    ? `${mine ? 'Needs you' : `Waiting on ${owner ?? 'someone'}`}${staleFor ? ` · ${staleFor}` : ''}`
     : (ACTIVITY_WORD[run.activity ?? 'thinking'] ?? 'Working');
-  const ago = relativeTime(Date.parse(run.startedAt) || now, now).replace(/ ago$/, '');
   return {
     id: `run:${run.runId}`,
     spaceId,

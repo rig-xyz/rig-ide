@@ -66,6 +66,7 @@ export function newSessionCard(): SessionCard {
     reacted: [],
     retriedAfterSignIn: false,
     newConversation: false,
+    lastEventAt: null,
   };
 }
 
@@ -165,6 +166,7 @@ const VALID_STATUSES: readonly SessionStatus[] = ['running', 'waiting', 'done', 
 export function applySessionEvent(card: SessionCard, event: SessionEvent): void {
   const state = card as CardState;
   state.lastSeq = Math.max(state.lastSeq, event.seq);
+  if (typeof event.at === 'number' && Number.isFinite(event.at)) state.lastEventAt = Math.max(state.lastEventAt ?? 0, event.at);
   const p = event.payload ?? {};
   const truncated = event.truncated === true;
 
@@ -231,7 +233,8 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
       const toolCall = p.toolCall as Record<string, unknown> | undefined;
       const toolCallId = typeof toolCall?.toolCallId === 'string' ? toolCall.toolCallId : '';
       const requestId = typeof p.requestId === 'string' ? p.requestId : toolCallId;
-      const requestedAt = typeof p.pubTs === 'number' ? p.pubTs : Date.now();
+      // When it was asked: its own stamp, else when the relay stored it; never "now" for an old ask if either says.
+      const requestedAt = typeof p.pubTs === 'number' ? p.pubTs : typeof event.at === 'number' ? event.at : Date.now();
       const options = Array.isArray(p.options)
         ? p.options.flatMap((o: unknown) => {
             const opt = o as Record<string, unknown> | null;

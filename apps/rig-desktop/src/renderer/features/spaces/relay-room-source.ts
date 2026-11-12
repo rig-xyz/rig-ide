@@ -1358,6 +1358,7 @@ export class RelayRoomSource implements RoomSource {
             payload: event.payload,
             ...(event.truncated ? { truncated: event.truncated } : {}),
             ...(event.originalBytes != null ? { originalBytes: event.originalBytes } : {}),
+            ...eventTime(event.createdAt),
           },
         });
         this.lastRunSeq.set(runId, event.seq);
@@ -1589,6 +1590,7 @@ export class RelayRoomSource implements RoomSource {
         payload: event.payload,
         ...(event.truncated ? { truncated: event.truncated } : {}),
         ...(event.originalBytes != null ? { originalBytes: event.originalBytes } : {}),
+        ...eventTime(event.createdAt),
       })),
     });
     for (const event of events) this.lastRunSeq.set(runId, Math.max(this.lastRunSeq.get(runId) ?? 0, event.seq));
@@ -2300,4 +2302,10 @@ function toMessageMeta(
       };
     }
   }
+}
+
+/** A relay event row's time as `SessionEvent.at`: how long a run has said nothing (`run-liveness.ts`). */
+function eventTime(createdAt: string | undefined): { at?: number } {
+  const at = createdAt ? Date.parse(createdAt) : NaN;
+  return Number.isFinite(at) ? { at } : {};
 }

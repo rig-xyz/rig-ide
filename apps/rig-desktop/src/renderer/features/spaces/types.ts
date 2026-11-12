@@ -159,6 +159,8 @@ export interface SessionCard {
   retriedAfterSignIn: boolean;
   /** Its session was lost or stopped responding, and the prompt went to a new conversation in this run (`run_retried`). */
   newConversation: boolean;
+  /** When the relay stored its latest event (ms), when the events say (`SessionEvent.at`); null otherwise. */
+  lastEventAt: number | null;
 }
 
 /**
@@ -178,6 +180,8 @@ export interface SessionEvent {
   payload: Record<string, unknown>;
   truncated?: boolean;
   originalBytes?: number;
+  /** When the relay stored it (ms, its row's `createdAt`); absent for this computer's own copy and recorded fixtures. */
+  at?: number;
 }
 
 export interface SessionRunMeta {

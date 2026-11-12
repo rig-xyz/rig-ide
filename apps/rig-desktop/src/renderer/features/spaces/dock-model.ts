@@ -9,6 +9,7 @@ import { formatElapsed } from '@renderer/lib/time-format';
 import type { TranscriptFocus } from './components/room-transcript';
 import type { ForYou } from './for-you';
 import { effectiveRunStatus, projectSessionCard, runCard } from './projection';
+import { cardLiveness, quietFor } from './run-liveness';
 import type { RoomTheme, RoomThemes } from './themes';
 import { personOf } from './person-identity';
 import type { AgentKind, RoomMember, RoomSnapshot } from './types';
@@ -397,7 +398,16 @@ export function dockTasks(
     let matrix: DotMatrixState;
     let step: string;
     let label: string;
-    if (status === 'running' || status === 'waiting') {
+    const liveness = cardLiveness(meta, card, status, now);
+    if (liveness?.kind === 'stalled') {
+      // Still "running" on the relay, but nothing has run it for longer than any working run
+      // goes quiet: it sits with the finished ones, said as stalled, and goes once you've seen it.
+      if (finishedSeen({ runId: meta.id, seq: message.seq, endedAt: liveness.since })) continue;
+      state = 'done';
+      matrix = 'stopped';
+      label = `Stalled · ${quietFor(liveness.since, now)}`;
+      step = own ? `Nothing from your agent for ${quietFor(liveness.since, now)}` : `Nothing from ${ownerName}'s agent for ${quietFor(liveness.since, now)}`;
+    } else if (status === 'running' || status === 'waiting') {
       const pending = card.permissions.pending.length > 0;
       const hidden = !own && (card.privacy === 'answer' || card.detailsHidden);
       state = pending ? 'waiting' : 'working';
@@ -412,7 +422,11 @@ export function dockTasks(
         : hidden
           ? 'Working'
           : (card.currentStep?.title ?? 'Thinking');
-      label = pending ? waitingOn : formatElapsed(now - startedAt);
+      label = pending
+        ? liveness?.kind === 'waiting' && liveness.stale
+          ? `${waitingOn} · ${quietFor(liveness.since, now)}`
+          : waitingOn
+        : formatElapsed(now - startedAt);
     } else {
       const parsed = meta.endedAt ? Date.parse(meta.endedAt) : NaN;
       const endedAt = Number.isNaN(parsed) ? startedAt : parsed;

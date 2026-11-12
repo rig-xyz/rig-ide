@@ -861,6 +861,29 @@ describe('createSpacesDispatcher', () => {
     expect(patchedSessions).toEqual([{ runId: 'stale-run', status: 'stopped' }]);
   });
 
+  it("stopRun ends its owner's run that no app here started only once the relay has heard nothing from it for a stall's length", async () => {
+    // Started on another Mac, or by an install that lost its in-flight record: still "running" on the relay for days.
+    const lastHeard = { at: new Date(Date.now() - 6 * 24 * 3_600_000).toISOString() };
+    const { api, postedEvents, patchedSessions } = makeFakeApi({
+      getSessionEvents: async (_b: string, runId: string) =>
+        ok({
+          run: { id: runId, bindingId: 'b1', ownerUserId: 'u1', agent: 'claude', model: null, status: 'running', title: null, commands: null, startedAt: lastHeard.at, endedAt: null },
+          events: [{ runId, seq: 3, kind: 'permission_requested', payload: {}, bytes: 0, truncated: false, originalBytes: null, createdAt: lastHeard.at }],
+        }),
+    });
+    const fake = makeFakeAcp();
+    const { stopRun } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    expect(await stopRun('days-old-run', 'b1')).toBe(true);
+    expect(postedEvents).toEqual([{ runId: 'days-old-run', kinds: ['turn_ended'], payloads: [{ status: 'stopped' }] }]);
+    expect(patchedSessions).toEqual([{ runId: 'days-old-run', status: 'stopped' }]);
+
+    // One that said something a minute ago may be running on another Mac: left alone.
+    lastHeard.at = new Date(Date.now() - 60_000).toISOString();
+    expect(await stopRun('recent-run', 'b1')).toBe(false);
+    expect(patchedSessions.filter((x) => x.runId === 'recent-run')).toEqual([]);
+  });
+
   it('settleIfNotLive leaves a run this process is running alone, and closes out one this app started but lost', async () => {
     const { api, postedEvents } = makeFakeApi({
       getSessionEvents: async () =>

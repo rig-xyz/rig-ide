@@ -39,6 +39,7 @@ import { permissionOptionRank, sortPermissionOptions } from '../approval-options
 import { globalAgentsFor } from '../global-setup';
 import { ConnectorLogo } from '../logos';
 import { cardFromSummary, effectiveRunStatus, projectSessionCard } from '../projection';
+import { cardLiveness, quietFor } from '../run-liveness';
 import type { RunSummary } from '@shared/spaces/room-cache';
 import type { MessageReaction } from '@shared/spaces/reactions';
 import type {
@@ -772,6 +773,11 @@ export function SessionCard({
   const status = effectiveRunStatus(meta.status, card);
   const running = status === 'running';
   const now = useNow(running);
+  // Still "running" on the relay, but is anything running it? Quiet past any working run, or an
+  // approval days old: said as such, never "Thinking" forever (`run-liveness.ts`).
+  const liveness = running ? cardLiveness(meta, card, status, now) : null;
+  const stalled = liveness?.kind === 'stalled';
+  const staleWait = liveness?.kind === 'waiting' && liveness.stale;
   // A finished run is its end minus its start. Without an end time (a header
   // read while it ran, until the Room re-reads it) it shows no duration rather
   // than one measured against the clock, which grew for as long as it stayed on screen.
@@ -818,7 +824,13 @@ export function SessionCard({
     : false;
   const liveSteps = stepCount(card);
 
-  const liveLabel = queued
+  const liveLabel = stalled
+    ? mine
+      ? `Stalled · nothing from your ${agentName} for ${quietFor(liveness.since, now)}`
+      : `Stalled · nothing from ${ownerName}'s ${agentName} for ${quietFor(liveness.since, now)}`
+    : staleWait && pending
+      ? `${onResolvePermission ? 'Waiting for your approval' : `Waiting on ${ownerName}'s approval`} · asked ${quietFor(liveness.since, now)} ago`
+    : queued
     ? `Queued · after ${mine ? 'your' : `${ownerName}'s`} current ${agentName} turn`
     : pending
     ? onResolvePermission
@@ -837,7 +849,9 @@ export function SessionCard({
   // same rule as the finished step list (`prettyStepTitle`).
   const liveTooltip =
     !queued && !pending && card.currentStep ? prettyStepTitle(card.currentStep.title, meta.agent)?.tooltip : undefined;
-  const liveMatrix: DotMatrixState = queued
+  const liveMatrix: DotMatrixState = stalled
+    ? 'stopped'
+    : queued
     ? 'queued'
     : pending
     ? 'waiting'
@@ -873,7 +887,22 @@ export function SessionCard({
               data-testid="session-live-line"
             >
               <DotMatrix state={liveMatrix} />
-              <span className="active-shimmer-muted min-w-0 truncate" title={liveTooltip}>
+              <span
+                className={cn('min-w-0 truncate', stalled || staleWait ? 'text-status-warn' : 'active-shimmer-muted')}
+                title={
+                  stalled
+                    ? mine
+                      ? 'The relay still shows this run going, but no app of yours is running it. End it, or Retry to ask again.'
+                      : `The relay still shows this run going, but ${ownerName}'s Rig hasn't sent anything since. Only ${ownerName} can end it.`
+                    : staleWait
+                      ? mine
+                        ? 'Answer the approval to carry on, or Stop the run.'
+                        : `It carries on once ${ownerName} answers it in their Rig.`
+                      : liveTooltip
+                }
+                data-testid="session-liveness"
+                data-liveness={liveness?.kind === 'waiting' ? (staleWait ? 'stale-wait' : 'waiting') : (liveness?.kind ?? 'live')}
+              >
                 {liveLabel}
               </span>
               {(answerOnly || (currentPrivate && !pending && !queued)) && (
@@ -1120,13 +1149,13 @@ export function SessionCard({
             className="enabled:hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-primary transition-colors disabled:text-text-muted"
           >
             <Square className="size-2.5" strokeWidth={1.5} fill="currentColor" />
-            {stopping ? 'Stopping…' : stopFailed ? "Couldn't stop it from here" : queued ? 'Cancel' : 'Stop'}
+            {stopping ? 'Stopping…' : stopFailed ? "Couldn't stop it from here" : stalled ? 'End' : queued ? 'Cancel' : 'Stop'}
           </button>
         )}
         {!running && messageId && ownId !== undefined && (
           <QuickReactions messageId={messageId} reactions={reactions} ownId={ownId} onPickerChange={setPicking} />
         )}
-        {!running && onRerun && prompt && retrying !== 'sent' && (
+        {(!running || stalled) && onRerun && prompt && retrying !== 'sent' && (
           <RetryButton agent={meta.agent} otherAgents={otherAgents} busy={retrying === 'busy'} onRerun={retry} />
         )}
         {/* Only where there's something to hide: your own finished turn with steps the room can see. */}

@@ -58,6 +58,22 @@ describe('real spaces in the rail', () => {
     expect(sessionMatrix(reading)).toEqual({ state: 'reading', tone: 'accent' });
   });
 
+  it("says a run the relay still shows going for days is stalled, not Thinking, and an old wait with its age", () => {
+    // #enes-onboarding's three rows: "Claude session · Thinking", 154h after they started.
+    const H = 3_600_000;
+    const run = { runId: 'r1', agent: 'claude' as const, ownerUserId: 'e', ownerName: 'Enes', startedAt: new Date(NOW - 154 * H).toISOString(), activity: null };
+    const stalled = runToSession('b1', run, 'me', NOW);
+    expect(stalled).toMatchObject({ state: 'paused', short: 'Stalled · 6d', name: 'Claude session' });
+    expect(sessionMatrix(stalled)).toEqual({ state: 'stopped', tone: 'mute' });
+    // The relay's last-event time, when it sends it, is what counts.
+    expect(runToSession('b1', { ...run, lastEventAt: new Date(NOW - 10 * 60_000).toISOString() }, 'me', NOW).state).toBe('running');
+    // A fresh run is never called stalled on its start time alone.
+    expect(runToSession('b1', { ...run, startedAt: new Date(NOW - 2 * H).toISOString() }, 'me', NOW).short).toBe('Thinking');
+    // Waiting on Enes's approval for days: still waiting, with how long.
+    const waiting = runToSession('b1', { ...run, activity: 'waiting' as const }, 'me', NOW);
+    expect(waiting).toMatchObject({ state: 'waiting_on_person', short: 'Waiting on Enes · 6d' });
+  });
+
   it('lists at most two recent chats, and none older than three days', () => {
     const day = 24 * 60 * 60 * 1000;
     const space = realSpaceToRail(

@@ -31,6 +31,8 @@ export type RigSpaceRunningItem = {
   title?: string;
   /** The owner's display name, from the space's member list (the relay sends only the id); absent when unknown. */
   ownerName?: string;
+  /** When its latest event was stored; absent from a relay that doesn't send it (the app then goes by `startedAt`). */
+  lastEventAt?: string;
 };
 
 export type RigSpaceLastRun = {

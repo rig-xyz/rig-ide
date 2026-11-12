@@ -399,6 +399,29 @@ describe('dockTasks', () => {
     expect(byId.r5).toMatchObject({ matrix: 'failed', status: 'Failed' });
   });
 
+  it("says a run nobody is running any more is stalled, never Thinking, and an approval days old with its age", () => {
+    // #enes-onboarding: Sam's run asked for an approval 154h ago; the next one said nothing for days.
+    const H = 3_600_000;
+    const asked = NOW - 154 * H;
+    const stuck = {
+      ...snapshot,
+      messages: [message('s6', 'sam', { kind: 'session', runId: 'r6' }), message('s7', 'sam', { kind: 'session', runId: 'r7' })],
+      sessionMetaByRun: {
+        r6: runMeta('r6', 'sam', 'claude', { startedAt: new Date(asked - 60_000).toISOString() }),
+        r7: runMeta('r7', 'sam', 'claude', { startedAt: new Date(NOW - 154 * H + 120_000).toISOString() }),
+      },
+      sessionEventsByRun: {
+        r6: approval.map((e) => ({ ...e, at: asked })),
+        r7: [{ ...step('think', 'Thinking')[0]!, at: NOW - 154 * H + 130_000 }],
+      },
+    };
+    const byId = Object.fromEntries(dockTasks(stuck, themes, 'me', NOW, () => false).map((t) => [t.runId, t]));
+    expect(byId.r6).toMatchObject({ state: 'waiting', status: 'Waiting on Sam · 6d' });
+    expect(byId.r7).toMatchObject({ state: 'done', matrix: 'stopped', status: 'Stalled · 6d', step: "Nothing from Sam's agent for 6d" });
+    // Seen once, the stalled one goes, like a finished run.
+    expect(dockTasks(stuck, themes, 'me', NOW, (r) => r.runId === 'r7').map((t) => t.runId)).toEqual(['r6']);
+  });
+
   it('places a task under the topic of its run or its ask, and none while the relay holds both', () => {
     const byId = Object.fromEntries(dockTasks(snapshot, themes, 'me', NOW, seenOnly('r4')).map((t) => [t.runId, t]));
     expect(byId.r1!.themeId).toBe('launch');
