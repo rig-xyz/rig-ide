@@ -4,7 +4,7 @@ import type { OrchAgentState } from '../feed/relay';
 import { finalAnswerFromEvents, type RawSessionEvent, type SpacesAcpSessions } from '../spaces/dispatch';
 import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import { ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
-import { agentProblemOf, connectorNeedsAuth, ProgressMapper, toolOf, type AcpToolUpdate, type OrchProgressEvent, type RunProblem } from '@shared/rig/orch-progress';
+import { agentProblemOf, connectorNeedsAuth, ProgressMapper, RUN_FAILED_PREFIX, RUN_NO_NOTE_PREFIX, toolOf, type AcpToolUpdate, type OrchProgressEvent, type RunProblem } from '@shared/rig/orch-progress';
 import { checkPermission } from './checks';
 import { askFirst, LOCKED_MODE, lockedSession, rigTool } from './lockdown';
 import { orchestratorSkill } from './skill';
@@ -16,9 +16,26 @@ import { orchestratorSkill } from './skill';
  * rules, pointers to what's new and due) and fetches the rest itself: Rig's
  * state through the rig_* tools, what's new through their connectors, read
  * only. Everything it changes goes through Rig's tools, which check it, log
- * it and make it undoable. The session lives while the app runs; Rig's state
- * is the memory that outlives it.
+ * it and make it undoable. Rig's state is the memory that outlives the
+ * session, so the session is let go (`SESSION_MAX_AGE_MS`, and after any run
+ * that failed or ended without its note) rather than kept for the app's life.
  */
+
+/**
+ * How long one orchestrator session is used for before a run starts a new
+ * one. A session kept for the app's life grows by every run's packet and
+ * reads (Rig 0.4.17 kept one for two weeks, to ~890K tokens), until its
+ * prompt is too long; and an expired sign-in or a cancelled call it took
+ * for "the user declined" stays in it for good. Rig's state carries what a
+ * run needs, so a day's session loses nothing.
+ */
+export const SESSION_MAX_AGE_MS = 24 * 60 * 60_000;
+
+/**
+ * How long a pass waits, after its turn ended with no stop reason (the
+ * runtime's sign for a prompt that failed), for the runtime to say why.
+ */
+export const PROMPT_FAILED_GRACE_MS = 2_000;
 
 /**
  * Tools the session can never use, whatever the person's own Claude settings
@@ -223,6 +240,8 @@ export type OrchestratorDeps = {
   /** Each step of a run as it happens (`ProgressMapper`): the Read step and its field show them. */
   onProgress?: (event: OrchProgressEvent) => void;
   turnTimeoutMs?: number;
+  /** How long a failed prompt's pass waits for the runtime's reason (`PROMPT_FAILED_GRACE_MS`). */
+  promptFailedGraceMs?: number;
   log?: { info: (msg: string, meta?: Record<string, unknown>) => void; warn: (msg: string, meta?: Record<string, unknown>) => void };
 };
 
@@ -232,7 +251,7 @@ type ProgressBody = OrchProgressEvent extends infer E ? (E extends unknown ? Omi
 export type RunResult = { runId: string; noted: boolean; ms: number; cards: number };
 
 export function createOrchestrator(deps: OrchestratorDeps) {
-  let live: { conversationId: string; ownerUserId: string; off: () => void } | null = null;
+  let live: { conversationId: string; ownerUserId: string; off: () => void; startedAt: number } | null = null;
   let running: Promise<Result<RunResult, string>> | null = null;
   /** The first run going (or waiting for its turn), and its events so far, for a window that asks again. */
   let firstGoing: { events: OrchProgressEvent[] } | null = null;
@@ -245,7 +264,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   async function ensure(name: string, fresh = false): Promise<Result<{ conversationId: string }, RunFail>> {
     const me = await deps.whoami();
     if (!me.success) return err(me.error);
-    if (!fresh && live && live.ownerUserId === me.data.id) return ok({ conversationId: live.conversationId });
+    if (!fresh && live && live.ownerUserId === me.data.id && deps.now() - live.startedAt < SESSION_MAX_AGE_MS) return ok({ conversationId: live.conversationId });
     await stop();
     const cwd = await deps.cwd();
     const conversationId = deps.newConversationId();
@@ -273,7 +292,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       if (refused) deps.log?.info('Rig orchestrator: refused a tool call', { tool: toolNameOf(request.toolCall as { title?: string; kind?: string }) });
       if (optionId) void deps.acp.resolvePermission(conversationId, request.requestId, optionId).catch(() => undefined);
     });
-    live = { conversationId, ownerUserId: me.data.id, off };
+    live = { conversationId, ownerUserId: me.data.id, off, startedAt: deps.now() };
     return ok({ conversationId });
   }
 
@@ -384,12 +403,22 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       deps.log?.info('Rig orchestrator: run ended', { trigger, passes: plan.length, widened, cards, ms: t() });
       return ok({ runId: firstRunId!, noted, ms: t(), cards });
     };
+    let result: Result<RunResult, string>;
     try {
-      return await go();
+      result = await go();
     } catch (e) {
       deps.log?.warn('Rig orchestrator: run threw', { trigger, error: e instanceof Error ? e.name : 'error' });
-      return fail(failOf(e instanceof Error ? e.message : String(e)));
+      result = fail(failOf(e instanceof Error ? e.message : String(e)));
     }
+    // A run that failed or ended without its note leaves a session that may not
+    // work again (signed out, its prompt too long), or that took a cancelled call
+    // for "the user declined" and now waits to be told how to go on: the next run
+    // starts a new one, rather than meeting the same session every hour.
+    if (!result.success || !result.data.noted) {
+      deps.log?.info('Rig orchestrator: letting the session go', { trigger, failed: !result.success });
+      await stop();
+    }
+    return result;
   }
 
   /** One turn of a run: its packet, its tool calls as progress, and its note (or one written for it). */
@@ -457,7 +486,16 @@ export function createOrchestrator(deps: OrchestratorDeps) {
           else if (e.line.status === 'for_you' && e.line.ref && onFeed.has(e.line.ref)) emit({ ...e, line: { ...e.line, known: true } });
           else emit(e);
         }
-      } else if (raw.kind === 'turn_end' && begun) finish(ok(null));
+      } else if (raw.kind === 'turn_end' && begun) {
+        if (raw.stopReason === null) {
+          // No stop reason: the prompt itself failed (signed out, prompt too long, the
+          // agent gone). The runtime's reason comes a moment later, through `queuePrompt`'s
+          // rejection, which wins if it does; never a pass that "ended" fine.
+          setTimeout(() => finish(err({ message: 'Claude stopped with an error before the run ended.' })), deps.promptFailedGraceMs ?? PROMPT_FAILED_GRACE_MS);
+        } else if (raw.stopReason === 'cancelled' && !closing) {
+          finish(err({ message: 'The run was cut off before it ended.' }));
+        } else finish(ok(null));
+      }
     });
     // Too long: the turn is stopped too, so it doesn't keep reading (and holding the session) after the run gave up on it.
     const timer = setTimeout(() => {
@@ -472,21 +510,24 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       const after = await deps.state();
       const noted = after.success && after.data.lastRun?.id === runId;
       const said = finalAnswerFromEvents(events).trim();
-      // Signed out of Rig while it read, or Claude said it can't: the run stops with that, not as a run with nothing found.
+      // Signed out of Rig while it read: the run stops with that, not as a run with nothing found.
       if (!after.success && after.error.problem === 'rig_signed_out') return err(after.error);
+      // Claude said it can't (signed out): the run stops with that too.
       const agentOut = !noted ? agentProblemOf(said) : undefined;
-      if (agentOut) return err({ message: said.slice(0, 300), problem: agentOut });
+      const failure: RunFail | null = !ended.success ? ended.error : agentOut ? { message: said.slice(0, 300), problem: agentOut } : null;
       if (!noted) {
         // No note: keep the cursors where they were, so the next run reads from the same place.
+        // The summary says it read nothing (`RUN_NO_NOTE_PREFIX`, `RUN_FAILED_PREFIX`): the Feed's
+        // "checked" time is never this run's.
         await deps.recordRun(runId, trigger, {
           read: Object.entries(state.cursors).map(([source, until]) => ({ source, until })),
           changed: [],
           left: [],
-          summary: ended.success ? `The run ended without a note. Claude's last words: ${said.slice(0, 600) || '(none)'}` : `The run failed: ${ended.error.message}`,
+          summary: failure ? `${RUN_FAILED_PREFIX} ${failure.message}` : `${RUN_NO_NOTE_PREFIX} Claude's last words: ${said.slice(0, 600) || '(none)'}`,
         });
       }
-      deps.log?.info('Rig orchestrator: pass ended', { runId, trigger, pass: passNo, noted, cards, ms: deps.now() - startedAt, ok: ended.success, saidLength: said.length });
-      return ended.success ? ok({ runId, noted, ms: deps.now() - startedAt, cards }) : err(ended.error);
+      deps.log?.info('Rig orchestrator: pass ended', { runId, trigger, pass: passNo, noted, cards, ms: deps.now() - startedAt, ok: failure === null, saidLength: said.length, ...(failure?.problem ? { problem: failure.problem } : {}) });
+      return failure ? err(failure) : ok({ runId, noted, ms: deps.now() - startedAt, cards });
     } finally {
       clearTimeout(timer);
       offRaw();

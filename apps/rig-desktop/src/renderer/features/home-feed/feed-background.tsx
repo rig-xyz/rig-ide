@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpRight, ChevronDown, Eye, MoonStar, PanelRightOpen, Plug, RefreshCw } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, ChevronDown, Eye, MoonStar, PanelRightOpen, Plug, RefreshCw } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { events, rpc } from '@renderer/lib/ipc';
 import { RigChatStore } from '@renderer/features/chat/rig-chat-store';
@@ -13,6 +13,7 @@ import { ActionButton } from './action-button';
 import { Kicker, SourceLogo, sourceName } from './bits';
 import { agoShort } from './connectors-model';
 import { useHome } from './home-context';
+import { feedFreshness, type RunRow } from './run-freshness';
 import { lastAnswer, sessionResult, type SessionResult } from './session-result';
 
 /**
@@ -23,7 +24,7 @@ import { lastAnswer, sessionResult, type SessionResult } from './session-result'
 
 type Aside = { ref: string; title: string; reason: string; closed: boolean; change: string; at: string };
 type Working = { ref: string; title: string; run: string; local?: boolean; status: string; space: string; spaceName: string; at: string; ended: string | null };
-type Run = { ref: string; title: string; quieted?: string; at: string; ended: string | null; read: { source: string; until: string }[]; changed: number };
+type Run = RunRow & { quieted?: string };
 
 const SET_ASIDE_KEY = ['rig', 'orch', 'set-aside'] as const;
 const RUN_KEY = ['rig', 'orch', 'last-run'] as const;
@@ -384,14 +385,14 @@ export function RunStatus() {
   const running = asked || (status?.success ? status.data.running : false);
   const { data } = useQuery({
     queryKey: RUN_KEY,
-    queryFn: () => rpc.rig.orch.query({ kind: 'runs', limit: 3 }),
+    // Far enough back to find the last real read behind a string of failed tries.
+    queryFn: () => rpc.rig.orch.query({ kind: 'runs', limit: 50 }),
     staleTime: 60_000,
     refetchInterval: running ? 15_000 : false,
   });
   const runs = data?.success && 'rows' in data.data ? (data.data.rows as unknown as Run[]) : [];
-  // The latest run that ended with a note: a run in progress has read nothing yet.
-  const last = runs.find((r) => r.ended && r.read.length) ?? runs[0] ?? null;
-  const checked = last?.read.map((r) => r.source).filter(Boolean) ?? [];
+  // Only a run that read, with its note, is a check: one that failed or ended without its note is said as such.
+  const fresh = feedFreshness(runs);
   const tools = useReads();
 
   const checkNow = async () => {
@@ -406,12 +407,15 @@ export function RunStatus() {
       void queryClient.invalidateQueries({ queryKey: SET_ASIDE_KEY });
     }
   };
-  const when = last ? agoShort(Date.parse(last.ended ?? last.at), now) : null;
+  const named = (sources: string[]) => (sources.length ? sources.map(nameOf).join(' and ') : 'your tools');
+  const when = fresh.kind === 'fresh' ? agoShort(fresh.at, now) : fresh.kind === 'failing' && fresh.lastRead ? agoShort(fresh.lastRead.at, now) : null;
   const said = running
     ? 'Claude is reading your work'
-    : last
-      ? `Rig checked ${checked.length ? checked.map(nameOf).join(' and ') : 'your tools'} ${when}`
-      : "Rig hasn't checked yet";
+    : fresh.kind === 'fresh'
+      ? `Rig checked ${named(fresh.sources)} ${when}${fresh.changed === 0 ? ', nothing new' : ''}`
+      : fresh.kind === 'failing'
+        ? `Rig's last check, ${agoShort(fresh.tried, now)}, read nothing: ${fresh.why}. ${fresh.lastRead ? `The last real read of ${named(fresh.lastRead.sources)} was ${when}.` : 'It has not read for you yet.'} Check now tries again in a new session.`
+        : "Rig hasn't checked yet";
 
   return (
     <div className="flex min-w-0 items-center gap-1.5 text-xs text-text-muted [-webkit-app-region:no-drag]" title={said}>
@@ -428,6 +432,11 @@ export function RunStatus() {
         <span className="flex min-w-0 items-center gap-1.5 text-accent">
           <DotMatrix state="searching" size="sm" />
           <span className="truncate">Reading…</span>
+        </span>
+      ) : fresh.kind === 'failing' ? (
+        <span className="flex min-w-0 items-center gap-1 text-status-warn">
+          <AlertCircle className="size-3 shrink-0" strokeWidth={1.75} aria-hidden />
+          <span className="truncate">{when ? `Couldn't check · read ${when}` : "Couldn't check"}</span>
         </span>
       ) : (
         <span className="truncate">{when ?? 'Not checked yet'}</span>

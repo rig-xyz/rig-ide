@@ -71,5 +71,7 @@ describe('connectorsReducer', () => {
     expect(resultLine({ lastResult: { added: 2, toFeed: 0, held: 1 } })).toBe('2 new, 1 held back');
     expect(agoShort(NOW - 10_000, NOW)).toBe('just now');
     expect(agoShort(NOW - 4 * 60_000, NOW)).toBe('4m ago');
+    expect(agoShort(NOW - 30 * 3_600_000, NOW)).toBe('30h ago');
+    expect(agoShort(NOW - 154 * 3_600_000, NOW)).toBe('6d ago');
   });
 });

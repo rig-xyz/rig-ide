@@ -219,5 +219,8 @@ export function agoShort(at: number, now: number): string {
   if (s < 45) return 'just now';
   const m = Math.round(s / 60);
   if (m < 60) return `${m}m ago`;
-  return `${Math.round(m / 60)}h ago`;
+  const h = Math.round(m / 60);
+  // Past two days, in days: "6d ago", never "154h ago".
+  if (h < 48) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
 }

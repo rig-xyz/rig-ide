@@ -292,7 +292,21 @@ export function connectorOfRef(ref: string | null): string | null {
 }
 
 /** Claude's own words when it is signed out, or on a key that can't reach the person's connectors. */
-const AGENT_SIGNED_OUT = /not logged in|please run \/login|invalid api key|authentication_error|oauth token (?:has )?expired|no such tool available: mcp__claude_ai_/i;
+const AGENT_SIGNED_OUT =
+  /not logged in|please run \/login|invalid api key|authentication_error|oauth (?:token|session) (?:has )?expired|failed to authenticate|no such tool available: mcp__claude_ai_/i;
+
+/**
+ * How a background run's row reads when the run read nothing (`main/rig/orch/agent.ts`
+ * writes it): it ended without its note, or it failed. The relay keeps only the
+ * summary, so these words are how the Feed tells such a run from a real read.
+ */
+export const RUN_NO_NOTE_PREFIX = 'The run ended without a note.';
+export const RUN_FAILED_PREFIX = 'The run failed:';
+
+/** Whether a run row is one that read nothing: no note of Claude's, or a failure. */
+export function runReadNothing(summary: string): boolean {
+  return summary.startsWith(RUN_NO_NOTE_PREFIX) || summary.startsWith(RUN_FAILED_PREFIX);
+}
 /** A connector's own words when its sign-in lapsed. */
 const CONNECTOR_AUTH = /needs? (?:re-?)?auth|re-?authenticat|unauthori[sz]ed|invalid_auth|not_authed|token_(?:revoked|expired)|\b401\b|reconnect/i;
 

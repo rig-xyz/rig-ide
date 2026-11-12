@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { OrchAgentState } from '../feed/relay';
 import type { RawSessionEvent } from '../spaces/dispatch';
 import type { OrchProgressEvent } from '@shared/rig/orch-progress';
-import { AGENT_DENIED_TOOLS, agentPermission, buildPacket, createOrchestrator, FIRST_RUN } from './agent';
+import { agentProblemOf, RUN_FAILED_PREFIX, runReadNothing } from '@shared/rig/orch-progress';
+import { AGENT_DENIED_TOOLS, agentPermission, buildPacket, createOrchestrator, FIRST_RUN, PROMPT_FAILED_GRACE_MS, SESSION_MAX_AGE_MS } from './agent';
 import { createTurnGate } from './turns';
 
 const NOW = Date.parse('2026-10-23T13:00:00Z');
@@ -96,7 +97,7 @@ describe('the background orchestrator', () => {
     expect(JSON.stringify(info.mock.calls)).not.toMatch(/board deck|salaries/);
   });
 
-  it('runs one turn on a session it keeps, records the run, and writes a note when Claude left none', async () => {
+  it('runs one turn, records the run, writes a note when Claude left none, and lets that session go', async () => {
     let emit: (e: RawSessionEvent) => void = () => {};
     const acp = {
       startSession: vi.fn(async () => ok({ sessionId: 's' })),
@@ -130,7 +131,9 @@ describe('the background orchestrator', () => {
     expect(a.success && b.success && a.data.runId === b.data.runId).toBe(true);
     const second = await o.run('schedule');
     expect(second.success).toBe(true);
-    expect(acp.startSession).toHaveBeenCalledTimes(1);
+    // Each ended without its note: the next run never meets the same session again.
+    expect(acp.startSession).toHaveBeenCalledTimes(2);
+    expect(acp.stopSession).toHaveBeenCalledTimes(2);
     expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ systemPromptAppend: expect.stringContaining('You are Rig, working in the background for Dylan Bourgeois.') }));
     expect((acp.startSession.mock.calls as unknown as [Record<string, unknown>][])[0]![0]).not.toHaveProperty('model');
     // Locked down in code: no shell, file writes, web, subagents or rig_start, no bypass, none of the person's settings allow rules, and Ask first.
@@ -140,6 +143,97 @@ describe('the background orchestrator', () => {
     expect(acp.queuePrompt).toHaveBeenCalledTimes(2);
     // Started, then ended without a note: the cursors stay where they were.
     expect(recordRun).toHaveBeenCalledWith(expect.stringMatching(/^run_/), 'schedule', expect.objectContaining({ read: [{ source: 'slack', until: '2026-10-23T11:58:00Z' }], summary: expect.stringMatching(/^The run ended without a note\./) }));
+  });
+
+  /** A session whose every turn ends as `end` says; `noted` runs have their note in when the turn ends. */
+  function lifecycle(end: (emit: (e: RawSessionEvent) => void, reject: (reason: string) => void) => void, opts: { noted?: boolean; now?: () => number; graceMs?: number } = {}) {
+    let emit: (e: RawSessionEvent) => void = () => {};
+    let lastRecorded: string | null = null;
+    let ids = 0;
+    const acp = {
+      startSession: vi.fn(async () => ok({ sessionId: 's' })),
+      setConfig: vi.fn(async () => ok(undefined)),
+      cancelTurn: vi.fn(async () => {}),
+      stopSession: vi.fn(async () => {}),
+      subscribeRaw: vi.fn(async (_id: string, on: (e: RawSessionEvent) => void) => ((emit = on), () => {})),
+      subscribePendingPermissions: vi.fn(async () => () => {}),
+      resolvePermission: vi.fn(async () => {}),
+      queuePrompt: vi.fn(async (_id: string, _text: string, _hidden: unknown, onRejected?: (reason: string) => void) => {
+        setTimeout(() => {
+          emit({ kind: 'turn_start', turnId: 't' });
+          end(emit, (reason) => onRejected?.(reason));
+        }, 0);
+        return ok({ turnId: null });
+      }),
+    };
+    const recordRun = vi.fn(async (id: string) => ((lastRecorded = id), ok(null)));
+    const warn = vi.fn();
+    const o = createOrchestrator({
+      acp,
+      rigTools: async () => ({ type: 'http', name: 'rig', url: 'http://127.0.0.1/mcp', headers: [] }) as never,
+      whoami: async () => ok({ id: 'usr_me' }),
+      cwd: async () => '/tmp/orch',
+      newConversationId: () => `orchestrator-${++ids}`,
+      // A noted run is the relay's latest noted run once its turn is over.
+      state: async () => ok(state(opts.noted && lastRecorded ? { lastRun: { id: lastRecorded, at: '2026-10-23T13:00:00Z' } } : {})),
+      sources: async () => [],
+      recordRun,
+      now: opts.now ?? (() => NOW),
+      promptFailedGraceMs: opts.graceMs ?? 50,
+      log: { info: vi.fn(), warn },
+    });
+    return { o, acp, recordRun, warn };
+  }
+
+  it('keeps a session while its runs leave their notes, and starts a new one after a day', async () => {
+    let now = NOW;
+    const l = lifecycle((emit) => emit({ kind: 'turn_end', turnId: 't', stopReason: 'end_turn' }), { noted: true, now: () => now });
+    expect((await l.o.run('schedule')).success).toBe(true);
+    now += 60 * 60_000;
+    expect((await l.o.run('schedule')).success).toBe(true);
+    expect(l.acp.startSession).toHaveBeenCalledTimes(1);
+    expect(l.acp.stopSession).not.toHaveBeenCalled();
+    now += SESSION_MAX_AGE_MS;
+    await l.o.run('schedule');
+    expect(l.acp.startSession).toHaveBeenCalledTimes(2);
+    expect(l.acp.stopSession).toHaveBeenCalledWith('orchestrator-1');
+  });
+
+  it("fails a pass whose prompt failed, with the runtime's reason, instead of calling it a run that found nothing", async () => {
+    // What 0.4.17 met for days: the turn ends with no stop reason, then the prompt's rejection says why.
+    const l = lifecycle((emit, reject) => {
+      emit({ kind: 'turn_end', turnId: 't', stopReason: null });
+      setTimeout(() => reject('Failed to authenticate: OAuth session expired and could not be refreshed'), 5);
+    });
+    const r = await l.o.run('schedule');
+    expect(r.success).toBe(false);
+    expect(l.recordRun).toHaveBeenCalledWith(expect.stringMatching(/^run_/), 'schedule', expect.objectContaining({ summary: `${RUN_FAILED_PREFIX} Failed to authenticate: OAuth session expired and could not be refreshed` }));
+    expect(runReadNothing((l.recordRun.mock.calls.at(-1) as unknown as [string, string, { summary: string }])[2].summary)).toBe(true);
+    // Its session is let go, so the next run starts a new one.
+    expect(l.acp.stopSession).toHaveBeenCalledWith('orchestrator-1');
+    await l.o.run('schedule');
+    expect(l.acp.startSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails a pass whose prompt failed even when the runtime never says why', async () => {
+    const l = lifecycle((emit) => emit({ kind: 'turn_end', turnId: 't', stopReason: null }), { graceMs: 5 });
+    const r = await l.o.run('schedule');
+    expect(r.success).toBe(false);
+    expect(l.recordRun).toHaveBeenCalledWith(expect.any(String), 'schedule', expect.objectContaining({ summary: expect.stringMatching(/^The run failed: Claude stopped with an error/) }));
+    expect(PROMPT_FAILED_GRACE_MS).toBeGreaterThan(5);
+  });
+
+  it('fails a pass cut off before its note, and never carries that session on', async () => {
+    // A cancelled call reads to Claude as "the user declined": kept, the session waited to be told how to go on, every hour.
+    const l = lifecycle((emit) => emit({ kind: 'turn_end', turnId: 't', stopReason: 'cancelled' }));
+    const r = await l.o.run('schedule');
+    expect(r.success).toBe(false);
+    expect(l.acp.stopSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('knows an expired Claude sign-in for what it is', () => {
+    expect(agentProblemOf('Failed to authenticate: OAuth session expired and could not be refreshed')).toBe('agent_signed_out');
+    expect(agentProblemOf('Prompt is too long')).toBeUndefined();
   });
 
   it("doesn't run when its session can't be put in Ask first", async () => {
@@ -315,7 +409,8 @@ describe('the first run', () => {
     await h.o.run('schedule');
     await h.o.startFirst(FIRST_RUN).done;
     expect(h.acp.startSession).toHaveBeenCalledTimes(2);
-    expect(h.acp.stopSession).toHaveBeenCalledTimes(1);
+    // Neither left a note (this harness never notes), so each lets its session go.
+    expect(h.acp.stopSession).toHaveBeenCalledTimes(2);
   });
 
   it('a regular run reads in one pass with the usual budget', async () => {
