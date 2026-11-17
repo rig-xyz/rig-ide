@@ -543,13 +543,16 @@ export class RigChatStore {
     this._view = view;
   }
 
-  submitPrompt(text: string): void {
+  submitPrompt(text: string, extraContext?: string): void {
     if (this._disposed || !text.trim()) return;
     const isWorking = this.affordances.isWorking;
     const targetRef = activeDocumentContextRegistry.getTargetRef(this.cwd);
-    const hiddenContext = targetRef
-      ? formatRigContextHiddenContext(targetRef, this.rigBindingId)
-      : undefined;
+    // What the agent is told with this prompt and the person does not see in the transcript: the
+    // document they have open, and whatever the caller adds (a side chat's Room context).
+    const hiddenContext =
+      [targetRef ? formatRigContextHiddenContext(targetRef, this.rigBindingId) : null, extraContext]
+        .filter(Boolean)
+        .join('\n\n') || undefined;
     const prompt: PromptInput = hiddenContext ? { text, hiddenContext } : { text };
 
     if (!isWorking) {

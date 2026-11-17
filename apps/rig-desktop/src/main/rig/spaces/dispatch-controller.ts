@@ -1,6 +1,11 @@
 import { log } from '@main/lib/logger';
 import { err, type Result } from '@emdash/shared';
-import type { AgentConfig, AgentConfigChange, createSpacesDispatcher } from './dispatch';
+import type {
+  AgentConfig,
+  AgentConfigChange,
+  createSpacesDispatcher,
+  SpaceSessionStatus,
+} from './dispatch';
 import type { RequestClaimPoller } from './request-claim';
 
 /**
@@ -77,6 +82,21 @@ export class SpacesDispatchController {
   async stopRun(runId: string, bindingId?: string): Promise<boolean> {
     if (!this.dispatcher) return false;
     return this.dispatcher.stopRun(runId, bindingId);
+  }
+
+  /** Used by the `spacesDispatch.newSession` RPC route: the owner's next message starts a new conversation. */
+  startOver(bindingId: string, ownerUserId: string): number {
+    return this.dispatcher?.startOver(bindingId, ownerUserId) ?? 0;
+  }
+
+  /** Used by the `spacesDispatch.stopAll` RPC route (`/stop`). */
+  async stopAll(bindingId: string, ownerUserId: string): Promise<number> {
+    return (await this.dispatcher?.stopAll(bindingId, ownerUserId)) ?? 0;
+  }
+
+  /** Used by the `spacesDispatch.sessionStatus` RPC route (`/status`). */
+  sessionStatus(bindingId: string, ownerUserId: string): SpaceSessionStatus[] {
+    return this.dispatcher?.sessionStatus(bindingId, ownerUserId) ?? [];
   }
 
   /** Runs on this Mac waiting on their owner's approval. */

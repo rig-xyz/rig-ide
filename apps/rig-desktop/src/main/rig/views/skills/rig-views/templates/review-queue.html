@@ -1,0 +1,94 @@
+<!doctype html>
+<!-- A queue of decisions: what waits on the person looking, as cards; what waits on others and what is done, quietly below.
+     Data shape: templates/review-queue.json. Narrow page: it is things to read and decide, so one readable column.
+
+     The decision card (card()) reads top to bottom: a small label for the kind of thing, the thing itself (here a
+     draft, so `body`), one quiet line of context, a one-line field for changes, then the choice with the proposal first.
+     Rows below are facts: no buttons, so the cards stay the only thing to press.
+
+     Not actionable now (`later: true`, e.g. "next pass"): a compact row that opens on demand, never a full card.
+     Setup questions (`d.ask`, e.g. "Run this every hour?") are cards too, above the queue, for the person it is asked of.
+     Never print an item's id. Refer to an item by its first words. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waiting on you</title>
+<link rel="stylesheet" href="../_rig/rig.css">
+<script src="../_rig/rig-view.js"></script>
+</head>
+<body>
+<main class="rv-page rv-narrow" id="root"></main>
+<script>
+const { h, card, note, pill, av, ago } = rig;
+const { state } = rig;
+state.open ??= {};
+const first = (t) => { const w = String(t).replace(/\s+/g, ' ').trim(); return w.length > 70 ? w.slice(0, 70).replace(/\s\S*$/, '') + '…' : w; };
+const link = (s) => (s.url ? h`<a href="${s.url}">${s.label}</a>` : h`<span class="mono">${s.label}</span>`);
+
+rig.mount((d, ctx) => {
+  // Oldest first: the item that has waited longest is the one to clear.
+  const waiting = d.items.filter((i) => !i.done && !i.later).sort((a, b) => new Date(a.since) - new Date(b.since));
+  const mine = waiting.filter((i) => !ctx.me || i.for_id === ctx.me.id);
+  const theirs = waiting.filter((i) => ctx.me && i.for_id !== ctx.me.id);
+  const later = d.items.filter((i) => !i.done && i.later);
+  const done = d.items.filter((i) => i.done).slice(0, 8);
+
+  return h`
+  <header class="rv-head"><div>
+    <h1 class="rv-title">${mine.length ? 'Waiting on you' : 'Nothing waiting on you'}</h1>
+    <span class="rv-meta" data-key="meta">${mine.length} for you · ${theirs.length} for others · ${later.length} later · ${done.length} done lately · read ${ago(d.read_at)}</span>
+  </div></header>
+
+  ${note(d.rig && d.rig.summary)}
+
+  ${d.ask && (!ctx.me || !d.ask.for_id || d.ask.for_id === ctx.me.id) ? h`<div class="rv-list">${card({
+      id: d.ask.id, label: d.ask.label, title: d.ask.title, why: d.ask.why, note: false, actions: d.ask.actions })}</div>` : ''}
+
+  ${mine.length ? h`<div class="rv-list">${mine.map((i) => card({
+      id: i.id,
+      label: i.label,                // what kind of thing this is: "Draft · X"
+      body: i.text,                  // the draft itself, to read: regular weight, line breaks kept
+      // One line: where it came from, how long ago it arrived, and the one thing to check first if there is one.
+      why: h`From ${link(i.source)} · ${ago(i.since)}${i.check ? h` · <b style="color:var(--warn);font-weight:500">${i.check}</b>` : ''}`,
+      note: i.note_hint || 'Change something first (optional)',
+      actions: i.actions,            // the proposal first and primary, then real alternatives
+    }))}</div>`
+  : h`<div class="rv-empty"><b>Nothing needs you right now</b>New drafts appear here after the next pass.</div>`}
+
+  ${theirs.length ? h`
+    <div class="rv-label"><span>Waiting on others</span><span>${theirs.length}</span></div>
+    <div class="rv-panel"><div class="rv-rows">${theirs.map((i) => h`
+      <div class="rv-row" style="--row: minmax(0, 1fr) auto" data-key="their-${i.id}">
+        <span class="rv-row-title">${i.text}</span>
+        <span class="rv-line">${av(i.for_name)}<span class="rv-small">${i.for_name} · ${ago(i.since)}</span></span>
+      </div>`)}</div></div>` : ''}
+
+  ${done.length ? h`
+    <div class="rv-label"><span>Done lately</span><span>${done.length}</span></div>
+    <div class="rv-panel"><div class="rv-rows">${done.map((i) => h`
+      <div class="rv-row" style="--row: minmax(0, 1fr) auto" data-key="done-${i.id}">
+        <span class="rv-row-title">${i.text}</span>
+        ${pill(i.done.label, i.done.kind === 'dropped' ? 'quiet' : 'ok')}
+      </div>`)}</div></div>` : ''}
+
+  ${later.length ? h`
+    <div class="rv-label"><span>Coming up</span><span>${later.length}</span></div>
+    <div class="rv-panel"><div class="rv-rows">${later.map((i) => h`
+      <div class="rv-row" style="--row: minmax(0, 1fr) auto" data-key="later-${i.id}">
+        <span class="rv-stack">
+          <button data-open="${i.id}" aria-expanded="${!!state.open[i.id]}" style="all:unset;cursor:pointer;color:var(--fg);font-size:12.5px">${first(i.text)}</button>
+          ${state.open[i.id] ? h`<span class="rv-row-meta" style="white-space:pre-line">${i.text}</span><span class="rv-row-meta">From ${link(i.source)}</span>` : ''}
+        </span>
+        <span class="rv-small">${i.later}</span>
+      </div>`)}</div></div>` : ''}
+
+  ${d.left_out && d.left_out.length ? h`<div class="rv-foot"><b>Left out on purpose:</b> ${d.left_out.join(' · ')}</div>` : ''}`;
+});
+document.addEventListener('click', (e) => {
+  const o = e.target.closest('[data-open]');
+  if (o) { state.open[o.dataset.open] = !state.open[o.dataset.open]; rig.rerender(); }
+});
+</script>
+</body>
+</html>

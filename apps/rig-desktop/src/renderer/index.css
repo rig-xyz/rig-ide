@@ -142,3 +142,140 @@
     background-clip: content-box;
   }
 }
+
+/* Rig views, tabs rail: behind a view the Room stays mounted but only its dock is drawn, as the
+   pill that leads back to it (`App.tsx`, `room-as-pill`). */
+.room-as-pill * {
+  visibility: hidden;
+}
+.room-as-pill [data-testid='theme-dock'],
+.room-as-pill [data-testid='theme-dock'] * {
+  visibility: visible;
+}
+.room-as-pill [data-testid='theme-dock'] {
+  pointer-events: auto !important;
+  cursor: pointer;
+}
+/* Over a view only the dock's own capsule shows: its column of sessions and topics belongs to the Room. */
+.room-as-pill [data-testid='theme-dock'] [data-shape]:not([data-shape='rail']),
+.room-as-pill [data-testid='theme-dock'] [data-shape]:not([data-shape='rail']) *,
+.room-as-pill [data-testid='theme-dock'] [data-dock-item]:not([data-dock-item='rail']),
+.room-as-pill [data-testid='theme-dock'] [data-dock-item]:not([data-dock-item='rail']) * {
+  visibility: hidden;
+  pointer-events: none !important;
+}
+
+/* Rig views, tabs rail: the Room is drawn on the centre sheet's own surface, as a view's page is,
+   not on the page colour it has outside the sheet. */
+.space-sheet [data-testid='room-view'] {
+  background: transparent;
+}
+
+/* Rig views, tabs rail: the centre sheet, as drawn in the "Rig Space Window" design. One surface for
+   the Room, a view, a session and a file beside the Room. A view's own page is transparent, so this
+   is the colour behind it too. */
+.space-sheet {
+  background: #121519;
+  border-color: #1e2227;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 12px 36px -12px rgba(0, 0, 0, 0.6);
+}
+:root[data-theme='light'] .space-sheet {
+  background: #ffffff;
+  border-color: #dfe3e8;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 12px 36px -16px rgba(15, 23, 42, 0.18);
+}
+
+/* The factory pill: a message just went into a topic, and a ring goes out from its dot, once. */
+@keyframes topic-ping {
+  from {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(3.2);
+  }
+}
+.topic-ping {
+  animation: topic-ping 900ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .topic-ping {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* The topic row: a card's words come in a moment after its shape has opened, rising a little;
+   a topic's count ticks over when a message goes into it. */
+@keyframes topic-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.topic-card-in {
+  animation: topic-card-in 260ms cubic-bezier(0.23, 1, 0.32, 1) 90ms both;
+}
+@keyframes count-tick {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+.count-tick {
+  display: inline-block;
+  animation: count-tick 240ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .topic-card-in,
+  .count-tick {
+    animation: none;
+  }
+}
+
+/* Opening a space from Home (`openSpaceFromHome`): Home and the space cross-fade, with the new
+   screen rising a few pixels; then the Room's conversation fades in over its skeleton instead of
+   snapping. Opacity and a little travel only. */
+::view-transition-old(root) {
+  animation: 160ms cubic-bezier(0.23, 1, 0.32, 1) both space-leave;
+}
+::view-transition-new(root) {
+  animation: 260ms cubic-bezier(0.23, 1, 0.32, 1) both space-enter;
+}
+@keyframes space-leave {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes space-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes room-arrive {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.room-arrive {
+  animation: room-arrive 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .room-arrive {
+    animation: none;
+  }
+}

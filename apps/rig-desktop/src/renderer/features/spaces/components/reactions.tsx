@@ -385,7 +385,12 @@ export function QuickReactions({
       >
         <SmilePlus className="size-3.5" strokeWidth={1.5} />
       </button>
-      <span className="mx-0.5 h-4 w-px bg-border-hairline" aria-hidden />
+      {/* The rule between reacting and the row's other actions; gone when no action follows
+          (a retry just filed takes its button away). */}
+      <span
+        className="mx-0.5 h-4 w-px bg-border-hairline [&:not(:has(~button))]:hidden"
+        aria-hidden
+      />
       {quick && !picking && plusRef.current && (
         <QuickRow
           anchor={plusRef.current}

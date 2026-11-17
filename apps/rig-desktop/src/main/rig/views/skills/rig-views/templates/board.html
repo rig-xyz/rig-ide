@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- A board: one column per status, one card per item. Use it when the question is "where does each thing stand".
+     Data shape: templates/board.json. Columns come from the data; groups, counts and "+N more" are worked out here.
+
+     The card, top to bottom: a mono line (id as a link, environment tag, then priority and owner pushed right with
+     .rv-end), the title, and at most one pill saying what Rig found (a PR, a link, a theme). Nothing else. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bug bash board</title>
+<link rel="stylesheet" href="../_rig/rig.css">
+<script src="../_rig/rig-view.js"></script>
+</head>
+<body>
+<main class="rv-page" id="root"></main>
+<script>
+const { h, note, pill, tag, prio, av, ago, state } = rig;
+state.filter ??= 'all';   // all | an environment | mine
+state.expanded ??= {};    // column id -> true once "Show all" was pressed
+const PER_COLUMN = 4;     // a column shows its top few; the rest is a count and a way in
+const RANK = { urgent: 0, high: 1, medium: 2, low: 3 };
+
+const cardOf = (i) => h`
+  <article class="rv-card" data-key="${i.id}">
+    <div class="rv-card-meta">
+      ${i.url ? h`<a href="${i.url}">${i.id}</a>` : h`<span>${i.id}</span>`}
+      ${i.env ? tag(i.env, i.env === 'prod' ? 'bad' : 'accent') : ''}
+      <span class="rv-end">${prio(i.priority)}${av(i.owner)}</span>
+    </div>
+    <div class="rv-card-title">${i.title}</div>
+    ${i.rig_tag ? pill(i.rig_tag.text, i.rig_tag.tone) : ''}
+  </article>`;
+
+rig.mount((d, ctx) => {
+  const me = ctx.me && ctx.me.id;
+  const envs = [...new Set(d.issues.map((i) => i.env).filter(Boolean))];
+  const test = {
+    all: () => true,
+    mine: (i) => me && i.owner_id === me,
+  };
+  const match = (i) => (test[state.filter] || ((x) => x.env === state.filter))(i);
+  const count = (f) => d.issues.filter((i) => (test[f] || ((x) => x.env === f))(i)).length;
+  const shown = d.issues.filter(match);
+  // Most urgent first inside a column: that is what someone scanning it wants to see.
+  const byUrgency = (a, b) => (RANK[(a.priority || '').toLowerCase()] ?? 9) - (RANK[(b.priority || '').toLowerCase()] ?? 9);
+  const inProgress = d.issues.filter((i) => i.column === 'progress').length;
+
+  return h`
+  <header class="rv-head"><div>
+    <span class="rv-eyebrow">${d.source}</span>
+    <h1 class="rv-title">${d.title}</h1>
+    <span class="rv-meta" data-key="meta">${d.issues.length} issues · ${inProgress} in progress · read ${ago(d.read_at)}</span>
+  </div></header>
+
+  ${note(d.rig && d.rig.summary)}
+
+  ${d.issues.length ? h`
+  <div class="rv-chips">${[['all', 'All'], ...envs.map((e) => [e, e]), ...(me ? [['mine', 'Mine']] : [])].map(([f, label]) =>
+    h`<button class="rv-chip" data-filter="${f}" aria-pressed="${state.filter === f}">${label}<span class="n">${count(f)}</span></button>`)}</div>
+
+  <div class="rv-cols" style="--cols:${d.columns.length}">${d.columns.map((c) => {
+    const all = shown.filter((i) => i.column === c.id).sort(byUrgency);
+    const open = state.expanded[c.id];
+    const list = open ? all : all.slice(0, PER_COLUMN);
+    const rest = all.slice(list.length);
+    return h`
+    <section class="rv-col" data-key="col-${c.id}">
+      <div class="rv-label"><span>${c.name}</span><span>${all.length}</span></div>
+      ${list.map(cardOf)}
+      ${rest.length ? h`<button class="rv-btn quiet sm" style="align-self:flex-start" data-expand="${c.id}">+${rest.length} more: ${rest.map((i) => i.id).slice(0, 3).join(', ')}${rest.length > 3 ? '…' : ''}</button>` : ''}
+      ${all.length ? '' : h`<div class="rv-more">Nothing here${state.filter === 'all' ? '' : ' for this filter'}.</div>`}
+    </section>`;
+  })}</div>`
+  : h`<div class="rv-empty"><b>No issues yet</b>They appear here after the next read of ${d.source}.</div>`}`;
+});
+
+document.addEventListener('click', (e) => {
+  const f = e.target.closest('[data-filter]');
+  if (f) { state.filter = f.dataset.filter; rig.rerender(); }
+  const x = e.target.closest('[data-expand]');
+  if (x) { state.expanded[x.dataset.expand] = true; rig.rerender(); }
+});
+</script>
+</body>
+</html>

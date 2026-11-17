@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { toast as appToast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
+import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
 import type { RigFeedSignal } from '@shared/rig/feed';
 import {
@@ -82,6 +83,8 @@ export interface HomeApi {
   openInApp: (target: { space: RailSpace; session?: RailSession; sessionId?: string }) => void;
   /** Opens a session by its space's folder (a Rig note's Open). */
   continueSession: (root: string, sessionId: string) => void;
+  /** Opens a space by its folder on this Mac (a space just made or joined). */
+  openPath: (path: string, opts?: { kind?: 'space' }) => void;
   /** Your connectors at work: what each watch session brought back and how it was sorted. */
   connectors: ConnectorsState;
   connectorsDispatch: Dispatch<ConnectorsAction>;
@@ -421,15 +424,34 @@ export function HomeProvider({
     [toast]
   );
 
+  // Spaces being downloaded to this Mac right now, so a second click doesn't start a second download.
+  const downloading = useRef(new Set<string>());
   const openInApp = useCallback(
     ({ space, session, sessionId }: { space: RailSpace; session?: RailSession; sessionId?: string }) => {
-      if (!space.root) return;
+      if (!space.root) {
+        // A space you are in that is not on this Mac yet (joined on another one): download it, then
+        // open its Room. Its sessions live on the Mac that ran them, so there is none to open here.
+        const bindingId = space.origin === 'real' ? space.bindingId : undefined;
+        if (!bindingId || downloading.current.has(bindingId)) return;
+        downloading.current.add(bindingId);
+        toast(`Downloading ${space.name} to this Mac…`);
+        void rpc.rig.join
+          .attach({ bindingId, name: space.name })
+          .then((result) => {
+            if (!result.success) return toast(`Rig couldn't download ${space.name}: ${result.error.message}`);
+            markJustAttachedSyncing(result.data.localPath, result.data.syncing);
+            onOpenPath(result.data.localPath, { kind: 'space' });
+          })
+          .catch(() => toast(`Rig couldn't download ${space.name}. Try again in a moment.`))
+          .finally(() => downloading.current.delete(bindingId));
+        return;
+      }
       if (sessionId) onContinueSession(space.root, sessionId);
       else if (session?.id.startsWith('chat:'))
         onContinueSession(space.root, session.id.slice('chat:'.length));
       else onOpenPath(space.root, { kind: 'space' });
     },
-    [onContinueSession, onOpenPath]
+    [onContinueSession, onOpenPath, toast]
   );
 
   /**
@@ -751,6 +773,7 @@ export function HomeProvider({
       toast,
       openInApp,
       continueSession: onContinueSession,
+      openPath: onOpenPath,
       connectors,
       connectorsDispatch,
       checkNow,

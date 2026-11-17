@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { RIG_TOOLS_SERVER, RUN_CONNECTORS_EVENT } from '@shared/spaces/connectors';
-import { PRIVATE_PROGRESS_EVENT, RUN_PRIVACY_EVENT, RUN_RETRIED_EVENT, type RoomSees } from '@shared/spaces/room-sees';
+import { PRIVATE_PROGRESS_EVENT, RUN_PRIVACY_EVENT, RUN_RETRIED_EVENT, RUN_TRIGGER_EVENT, type RoomSees } from '@shared/spaces/room-sees';
 
 /**
  * "Room sees" (see `shared/spaces/room-sees.ts`), enforced on the member's
@@ -12,7 +12,10 @@ import { PRIVATE_PROGRESS_EVENT, RUN_PRIVACY_EVENT, RUN_RETRIED_EVENT, type Room
  * - **Steps**: an allowlist, so an unknown or future event kind is dropped.
  *   Each step goes up as a label built only from fields that can't carry
  *   free text (the tool's kind, the tool or connector's name, a path inside
- *   the space), never the adapter's title, input or output. What a
+ *   the space), never the adapter's title, input or output. The one piece
+ *   of the agent's own words that goes with it is a command's short
+ *   `description` ("List the views' files"), so a step reads as what it
+ *   was for; never for a step marked private. What a
  *   connector returned (any MCP tool, the space's or the agent's own) and
  *   any file outside the space's folder is marked `private: true`: others
  *   see the label with a lock. Edits to the space's own files keep their
@@ -75,6 +78,8 @@ type ToolState = {
   name: string;
   /** Every path the step reported, as reported. */
   paths: string[];
+  /** What the step is for, in the agent's words: the one line it writes beside a command. */
+  description?: string;
   status?: string;
 };
 
@@ -91,6 +96,14 @@ function toolNameOf(payload: Record<string, unknown>): string | null {
   }
   if (typeof payload.title === 'string' && MCP_NAME.test(payload.title)) return payload.title;
   return null;
+}
+
+/** A command's one-line description, as the agent wrote it: short prose on one line, or nothing. */
+function descriptionOf(payload: Record<string, unknown>): string | null {
+  const value = record(payload.rawInput)?.description;
+  if (typeof value !== 'string') return null;
+  const text = value.replace(/\s+/g, ' ').trim();
+  return text && text.length <= 160 ? text : null;
 }
 
 function pathsOf(payload: Record<string, unknown>): string[] {
@@ -143,6 +156,8 @@ export class RoomSeesFilter {
     if (this.level === 'everything') return [{ kind, payload }];
     switch (kind) {
       case RUN_PRIVACY_EVENT:
+      // What started the run (a press in a view, its schedule): the person's own action, not the agent's work.
+      case RUN_TRIGGER_EVENT:
       case 'run_model':
       case 'permission_decided':
         return [{ kind, payload }];
@@ -189,6 +204,8 @@ export class RoomSeesFilter {
     if (name) tool.name = name;
     for (const path of pathsOf(payload)) if (!tool.paths.includes(path)) tool.paths.push(path);
     if (typeof payload.status === 'string') tool.status = payload.status;
+    const description = descriptionOf(payload);
+    if (description) tool.description = description;
     return { tool, isNew };
   }
 
@@ -238,6 +255,10 @@ export class RoomSeesFilter {
           kind: tool.kind,
           ...(tool.status ? { status: tool.status } : {}),
           title: this.label(tool),
+          // The renderer reads a step's description from `rawInput.description`; nothing else of the input goes.
+          ...(!isPrivate && !isMcp(tool.name) && tool.description
+            ? { rawInput: { description: tool.description } }
+            : {}),
           ...(isPrivate ? { private: true } : {}),
           ...(!isPrivate && inSpace.length > 0 ? { locations: [...new Set(inSpace)].map((path) => ({ path })) } : {}),
           ...(diffs.length > 0 ? { content: diffs } : {}),

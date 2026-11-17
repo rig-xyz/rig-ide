@@ -35,7 +35,8 @@ describe('browser tool names', () => {
       ['rig_browser_read', 'Was called browser_read before Rig 0.4.13.'],
       ['rig_browser_screenshot', 'Was called browser_screenshot before Rig 0.4.13.'],
     ]);
-    expect([...PRE_APPROVED_BROWSER_TOOLS]).toEqual(BROWSER_TOOLS.map((t) => t.name));
+    // Pre-approved: the browser tools, and looking at a view (Rig Alpha), which only reads too.
+    expect([...PRE_APPROVED_BROWSER_TOOLS]).toEqual([...BROWSER_TOOLS.map((t) => t.name), 'rig_view_look']);
   });
 });
 

@@ -2,6 +2,10 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { autorun } from 'mobx';
 import { useEffect, useMemo, useState } from 'react';
 import type { RigChatStore } from '@renderer/features/chat/rig-chat-store';
+import {
+  getSessionAttentionFacts,
+  subscribeSessionAttention,
+} from '@renderer/features/chat/session-attention-store';
 import { rigSessionRegistry } from '@renderer/features/chat/session/rig-session-registry';
 import { useSpaceStatus } from '@renderer/features/home/use-space-status';
 import { useNotificationSummary } from '@renderer/features/notifications/use-notifications';
@@ -55,6 +59,7 @@ export function useRealSpaces(): {
   });
   useRefreshChatsOnStart();
   const live = useLiveChats(chats.data);
+  const unseen = useUnseenChats(chats.data);
 
   const members = useQueries({
     queries: ids.map((bindingId) => ({
@@ -83,7 +88,11 @@ export function useRealSpaces(): {
               status: statusBy.get(binding.id),
               chats: (chats.data ?? [])
                 .filter((c) => c.rigBindingId === binding.id)
-                .map((c) => (live.has(c.id) ? { ...c, live: live.get(c.id) } : c)),
+                .map((c) => ({
+                  ...c,
+                  ...(live.has(c.id) ? { live: live.get(c.id) } : {}),
+                  ...(unseen.has(c.id) ? { unseen: true } : {}),
+                })),
             },
             self?.id ?? null,
             now
@@ -101,6 +110,7 @@ export function useRealSpaces(): {
     resolved.data,
     chats.data,
     live,
+    unseen,
     membersKey,
     self?.id,
   ]);
@@ -150,6 +160,27 @@ function useLiveChats(chats: readonly { id: string }[] | undefined): ReadonlyMap
     [chats]
   );
   return live;
+}
+
+/** Which of these chats finished with an answer the person has not looked at (`session-attention-store.ts`). */
+function useUnseenChats(chats: readonly { id: string }[] | undefined): ReadonlySet<string> {
+  const [unseen, setUnseen] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    const read = () => {
+      const next = new Set<string>();
+      for (const chat of chats ?? []) {
+        const facts = getSessionAttentionFacts(chat.id);
+        if (facts.lastOutputAt !== null && facts.lastOutputAt > (facts.lastSeenAt ?? 0)) next.add(chat.id);
+      }
+      setUnseen((prev) => (prev.size === next.size && [...next].every((id) => prev.has(id)) ? prev : next));
+    };
+    read();
+    const offs = (chats ?? []).map((chat) => subscribeSessionAttention(chat.id, read));
+    return () => {
+      for (const off of offs) off();
+    };
+  }, [chats]);
+  return unseen;
 }
 
 function sameMap<K, V>(a: ReadonlyMap<K, V>, b: ReadonlyMap<K, V>): boolean {

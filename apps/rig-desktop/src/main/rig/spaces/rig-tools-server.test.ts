@@ -3,7 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ok } from '@emdash/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
-import { FEED_RIG_TOOLS, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, readerScope, type RigToolScope, type RigToolsBackend } from './rig-tools';
+import { FEED_RIG_TOOLS, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, readerScope, type RigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
 import { createRigToolsServer, type RigToolsServer } from './rig-tools-server';
 
 const DYLAN: RigToolScope = { bindingId: 'b1', ownerUserId: 'u-dylan', agent: 'claude', cwd: '/rigs/one' };
@@ -137,6 +137,28 @@ describe('rig tools server', () => {
     expect(status).toBe(403);
   });
 
+  it('lists a tool marked Alpha-only to space sessions only while Rig Alpha is on', async () => {
+    let alpha = false;
+    const look: RigTool = {
+      name: 'rig_view_look',
+      description: 'Look at a view',
+      inputSchema: {},
+      annotations: { title: 'Look at a view', readOnlyHint: true },
+      run: async () => ({ text: 'ok' }),
+    };
+    server = createRigToolsServer({
+      backend: { ...fakeBackend(), alphaOn: () => alpha },
+      extraTools: [look],
+      alphaOnly: new Set(['rig_view_look']),
+    });
+    const client = await connect(await server.serverFor(DYLAN));
+    const names = async () => (await client.listTools()).tools.map((t) => t.name);
+    expect(await names()).not.toContain('rig_view_look');
+    alpha = true;
+    expect(await names()).toContain('rig_view_look');
+    await client.close();
+  });
+
   it('lists the Feed’s tools to space sessions only while Rig Alpha is on', async () => {
     let alpha = false;
     server = createRigToolsServer({ backend: { ...fakeBackend(), orch: {} as RigToolsBackend['orch'], alphaOn: () => alpha } });
@@ -145,7 +167,10 @@ describe('rig tools server', () => {
     expect((await names()).filter((n) => FEED_RIG_TOOLS.has(n))).toEqual([]);
     expect(await names()).toContain('rig_people_list');
     alpha = true;
-    expect((await names()).filter((n) => FEED_RIG_TOOLS.has(n)).sort()).toEqual([...FEED_RIG_TOOLS].sort());
+    // All of the Feed's tools but the one that arranges the person's list of spaces, which is Home's alone.
+    expect((await names()).filter((n) => FEED_RIG_TOOLS.has(n)).sort()).toEqual(
+      [...FEED_RIG_TOOLS].filter((n) => n !== 'rig_nav').sort()
+    );
     await client.close();
   });
 

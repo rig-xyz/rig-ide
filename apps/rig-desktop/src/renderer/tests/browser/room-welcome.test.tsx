@@ -50,6 +50,7 @@ describe('RoomWelcome', () => {
           connecting={false}
           hasSkills={false}
           agent={agent}
+          standingWork={false}
           onPrefill={(text) => prefills.push(text)}
           onInvite={() => invites++}
           onSetUpAgent={() => setUps++}

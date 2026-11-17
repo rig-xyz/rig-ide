@@ -1,17 +1,19 @@
-import { AtSign, Check, ChevronDown, CornerDownLeft, CornerUpLeft, FileText, Paperclip, Smile, Sparkles } from 'lucide-react';
+import { AtSign, Check, ChevronDown, CornerDownLeft, CornerUpLeft, FileText, Paperclip, Smile, Sparkles, Terminal } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { WILL_SEND_WHEN_ONLINE } from '@renderer/features/home/home-connection';
+import { useAlphaEnabled } from '@renderer/features/home-feed/use-new-home-enabled';
 import { cn } from '@renderer/lib/utils';
 import { formatFileTag, rankTaggableFiles, type TaggableFile } from '@shared/rig/file-tags';
 import { isLargeBatch, type ComposerAttachment } from '../attachments';
 import { formatMarkerFor, toggleMarker } from '../composer-format';
 import { loadEmojiIndex, matchShortcodes, recordEmojiUse, type EmojiIndex } from '../emoji-data';
 import { agentLogoId, BrandLogo } from '../logos';
-import { decideSend, type ComposerRoute, type SendOverride } from '../send-decision';
+import { decideSend, soloAgent, type ComposerRoute, type SendOverride } from '../send-decision';
 import type { ComposerAttachments } from '../use-composer-attachments';
 import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { AttachmentChips } from './attachment-chips';
+import { matchRoomCommands } from '../room-commands';
 import { applyMentionText, foldName, mentionQueryOf, nameMatches, presentMentions, type MentionPerson } from '../mentions';
 import { SOMEONE } from '../person-identity';
 import type { AgentKind, MessageMention, RoomAgent, RoomMember, RoomReplyRef, RoomSkill } from '../types';
@@ -207,6 +209,7 @@ export function Composer({
   footer,
   autoFocus = false,
   people = [],
+  invited = 0,
   onInvitePerson,
   onSetUpAgent,
   elsewhereAgents,
@@ -253,6 +256,8 @@ export function Composer({
   autoFocus?: boolean;
   /** Who else `@` offers: people invited to the space, and your people who aren't in it. */
   people?: readonly MentionPerson[];
+  /** How many people the space has invited who haven't joined (named or not); any turns the solo rule off. */
+  invited?: number;
   /** Invites someone tagged from outside the space ("Invite and send"); resolves to whether it worked. No offer without it. */
   onInvitePerson?: (person: MessageMention) => Promise<boolean>;
   /** Opens the install offer for one of your agents that isn't set up on this Mac; no button without it. */
@@ -463,10 +468,24 @@ export function Composer({
     textareaRef.current?.focus();
   };
 
+  // Rig Alpha: side chats (the "/side" command), and a plain message going to your agent when you're alone.
+  const alpha = useAlphaEnabled();
   const items: MenuItem[] = useMemo(() => {
     if (skillQuery !== null) {
       const q = skillQuery.toLowerCase();
-      return skills
+      // Rig's own commands first: picking one runs it, nothing is posted to the Room.
+      const commands: MenuItem[] = matchRoomCommands(skillQuery, alpha).map((command) => ({
+        key: `command-${command.id}`,
+        section: 'Rig',
+        icon: <Terminal className="size-3.5 text-text-muted" strokeWidth={1.5} />,
+        label: command.cmd,
+        detail: command.desc,
+        apply: () => {
+          setValue('');
+          onSend(command.cmd, { agent: null, attach: null });
+        },
+      }));
+      const skillItems: MenuItem[] = skills
         .filter((skill) => skill.cmd.slice(1).toLowerCase().startsWith(q) || skill.name.toLowerCase().includes(q))
         .map((skill) => {
           const addedBy = members.find((m) => m.id === skill.addedBy);
@@ -475,9 +494,11 @@ export function Composer({
             icon: <Sparkles className="size-3.5 text-text-muted" strokeWidth={1.5} />,
             label: skill.cmd,
             detail: [skill.desc, addedBy ? `added by ${addedBy.name}` : ''].filter(Boolean).join(' · '),
+            section: 'Skills in this space',
             apply: () => applySkill(skill),
           };
         });
+      return [...commands, ...skillItems];
     }
     if (emojiQuery !== null) {
       return emojiIndex
@@ -550,7 +571,7 @@ export function Composer({
     }
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skillQuery, mentionQuery, fileQuery, emojiQuery, emojiIndex, spaceFiles, skills, members, offered, runnable, busyAgents, people]);
+  }, [skillQuery, mentionQuery, fileQuery, emojiQuery, emojiIndex, spaceFiles, skills, members, offered, runnable, busyAgents, people, alpha]);
 
   const menuOpen = items.length > 0 && dismissedFor !== value;
   // Skills, files and emoji open the list above the input; people and agents the pill row.
@@ -623,8 +644,12 @@ export function Composer({
   const docPill = agentPill && openDoc && !droppedDoc ? openDoc : null;
   // The pill stays only while it's still where the message goes (another agent chosen in the menu drops it).
   const shownOwnPill = ownPill && (override?.kind !== 'agent' || override.agent === ownPill.agent) ? ownPill : null;
+  // Alone with your agent (Rig Alpha): nobody else joined or invited, so a plain message is for it. An @ of anyone is never taken over.
+  const solo =
+    alpha && !hasMention(value) ? soloAgent({ people: members.length, invited, runnable: runnable.map((a) => a.agent) }) : null;
   const decision = decideSend({
     text: value,
+    solo,
     ownAgents: agents.map((a) => a.agent),
     runnable: runnable.map((a) => a.agent),
     elsewhere: availableAgents ? elsewhereAgents : null,
@@ -742,9 +767,11 @@ export function Composer({
           data-testid="skills-palette"
           role="listbox"
         >
-          <p className="px-2 pt-1 pb-1 text-2xs text-text-muted">
-            {skillQuery !== null ? 'Skills in this space' : emojiQuery !== null ? 'Emoji' : 'Files in this space'}
-          </p>
+          {skillQuery === null && (
+            <p className="px-2 pt-1 pb-1 text-2xs text-text-muted">
+              {emojiQuery !== null ? 'Emoji' : 'Files in this space'}
+            </p>
+          )}
           {items.map((item, i) => (
             <div key={item.key}>
               {item.section && item.section !== items[i - 1]?.section && (
@@ -763,7 +790,12 @@ export function Composer({
                 )}
               >
                 <span className="flex size-5 shrink-0 items-center justify-center">{item.icon}</span>
-                <span className={cn('text-sm text-text-primary', skillQuery !== null && 'font-mono')}>
+                <span
+                  className={cn(
+                    'shrink-0 text-sm whitespace-nowrap text-text-primary',
+                    skillQuery !== null && 'font-mono'
+                  )}
+                >
                   {listMenu ? item.label : `@${item.label}`}
                 </span>
                 <span className="min-w-0 truncate text-xs text-text-muted">{item.detail}</span>

@@ -8,7 +8,7 @@ import type { DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import { formatElapsed } from '@renderer/lib/time-format';
 import type { TranscriptFocus } from './components/room-transcript';
 import type { ForYou } from './for-you';
-import { effectiveRunStatus, projectSessionCard, runCard } from './projection';
+import { effectiveRunStatus, projectSessionCard, runCard, stepLabel } from './projection';
 import { cardLiveness, quietFor } from './run-liveness';
 import type { RoomTheme, RoomThemes } from './themes';
 import { personOf } from './person-identity';
@@ -34,6 +34,29 @@ export function themeColor(themeId: string): string {
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
   return `var(--theme-${(hash % THEME_SLOTS) + 1})`;
+}
+
+/** The palette in an order where neighbours differ most: green, amber, indigo, pink, cyan, coral, violet, grey. */
+const CONTRAST_SLOTS = [1, 3, 7, 6, 5, 8, 2, 4];
+
+/**
+ * A colour per topic of one space, so the topics shown together can be told apart: in the order
+ * the topics were born, each takes the next slot of the palette. A topic keeps its colour as
+ * others come and go after it. (`themeColor` hashes the id alone, so two of three topics can
+ * land on the same or a near colour.)
+ */
+export function distinctThemeColors(
+  themes: readonly { id: string; bornSeq: number }[]
+): Map<string, string> {
+  const ordered = [...themes].sort(
+    (a, b) => a.bornSeq - b.bornSeq || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  );
+  return new Map(
+    ordered.map((theme, index) => [
+      theme.id,
+      `var(--theme-${CONTRAST_SLOTS[index % CONTRAST_SLOTS.length]})`,
+    ])
+  );
 }
 
 export function sameFocus(a: DockFocus | null, b: DockFocus | null): boolean {
@@ -416,7 +439,7 @@ export function dockTasks(
         ? waitingOn
         : hidden
           ? 'Working'
-          : (card.currentStep?.title ?? 'Thinking');
+          : ((card.currentStep ? stepLabel(card.currentStep) : undefined) ?? 'Thinking');
       label = pending
         ? liveness?.kind === 'waiting' && liveness.stale
           ? `${waitingOn} · ${quietFor(liveness.since, now)}`

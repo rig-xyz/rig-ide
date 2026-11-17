@@ -10,7 +10,9 @@ import { cn } from '@renderer/lib/utils';
  * thinking orbits the edge, reading scans rows like lines of text,
  * searching hops between cells, editing fills in reading order, running
  * moves like a level meter, planning spirals in and out, and waiting
- * breathes in the center only. End glyphs: done (check), failed (cross),
+ * breathes in the center only, and standby shimmers: every cell stays softly lit and drifts
+ * a little brighter and dimmer, slowly (scheduled
+ * work at rest, ready to wake). End glyphs: done (check), failed (cross),
  * stopped (block), queued (bar), idle (a dim cross: nothing running) and
  * quiet (one dim dot: a suggestion, not a session yet).
  *
@@ -29,7 +31,8 @@ export type DotMatrixActivity =
   | 'editing'
   | 'running'
   | 'planning'
-  | 'waiting';
+  | 'waiting'
+  | 'standby';
 export type DotMatrixEnd = 'done' | 'failed' | 'stopped' | 'queued' | 'idle' | 'quiet';
 export type DotMatrixTone = 'accent' | 'warn' | 'ok' | 'mute';
 export type DotMatrixState = DotMatrixActivity | DotMatrixEnd;
@@ -75,6 +78,13 @@ const blank = () => Array<number>(9).fill(LO);
 const EDGE = [0, 1, 2, 5, 8, 7, 6, 3];
 const SPIRAL = [0, 1, 2, 5, 8, 7, 6, 3, 4];
 const HOPS = [4, 0, 5, 2, 7, 3, 8, 1, 6, 4, 2, 6, 1, 8, 3, 5, 0, 7];
+
+/** Standby's shimmer: the brightness every cell rests at, how far it drifts, and how slowly. */
+const SHIMMER_BASE = 0.3;
+const SHIMMER_SWING = 0.14;
+const SHIMMER_SLOW = (2 * Math.PI) / 64; // one wave in about 7 s of 110 ms ticks
+const SHIMMER_SLOWER = (2 * Math.PI) / 109; // and one in about 12 s
+const SHIMMER_PHASE = [0, 2.4, 4.9, 1.1, 3.6, 5.8, 0.6, 3.0, 5.2];
 
 /** Each activity's frame at clock tick `t`: nine opacities, row by row. */
 export const DOT_MATRIX_FRAMES: Record<DotMatrixActivity, (t: number) => number[]> = {
@@ -141,6 +151,18 @@ export const DOT_MATRIX_FRAMES: Record<DotMatrixActivity, (t: number) => number[
     for (const c of [1, 3, 5, 7]) f[c] = LO + (v - 0.3) * 0.35;
     return f;
   },
+  standby(t) {
+    // A shimmer: every cell is always softly lit, and each drifts a little brighter and dimmer
+    // on its own slow waves (about 7 and 12 seconds). Nothing turns on or off; the grid seems
+    // to breathe unevenly. Worked out from the tick alone, so it needs no state.
+    const f = blank();
+    for (let c = 0; c < 9; c++) {
+      const slow = Math.sin(t * SHIMMER_SLOW + SHIMMER_PHASE[c]!);
+      const slower = Math.sin(t * SHIMMER_SLOWER + SHIMMER_PHASE[8 - c]! * 1.7);
+      f[c] = SHIMMER_BASE + SHIMMER_SWING * (0.65 * slow + 0.35 * slower);
+    }
+    return f;
+  },
 };
 
 const glyph = (on: number[], v = 1) => {
@@ -182,13 +204,15 @@ function LiveMatrix({
   state,
   cell,
   tone,
+  phase,
 }: {
   state: DotMatrixActivity;
   cell: string;
   tone: string;
+  phase: number;
 }) {
   const t = useSyncExternalStore(subscribeMatrixClock, getMatrixTick, getMatrixTick);
-  return <Cells frame={DOT_MATRIX_FRAMES[state](t)} tone={tone} cell={cell} />;
+  return <Cells frame={DOT_MATRIX_FRAMES[state](t + phase)} tone={tone} cell={cell} />;
 }
 
 function Cells({ frame, tone, cell }: { frame: number[]; tone: string; cell: string }) {
@@ -211,6 +235,7 @@ export function DotMatrix({
   className,
   label,
   tone,
+  phase = 0,
 }: {
   state: DotMatrixState;
   size?: keyof typeof SIZES;
@@ -219,6 +244,8 @@ export function DotMatrix({
   tone?: DotMatrixTone;
   /** Spoken name for the state; the matrix is decorative without one. */
   label?: string;
+  /** Clock ticks ahead of the others, so matrices side by side in the same state are not in lockstep. */
+  phase?: number;
 }) {
   const { cell, gap } = SIZES[size];
   return (
@@ -236,7 +263,7 @@ export function DotMatrix({
           cell={cell}
         />
       ) : (
-        <LiveMatrix state={state} cell={cell} tone={TONES[tone ?? 'accent']} />
+        <LiveMatrix state={state} cell={cell} tone={TONES[tone ?? 'accent']} phase={phase} />
       )}
     </span>
   );

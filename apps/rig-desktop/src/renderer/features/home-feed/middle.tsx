@@ -603,10 +603,10 @@ function SpaceBody({ space }: { space: RailSpace }) {
         title={`# ${space.name}`}
         summary={space.summary}
       />
-      {space.root && (
+      {(space.root || (space.origin === 'real' && space.bindingId)) && (
         <div className="flex gap-1.5">
           <ActionButton icon={DoorOpen} onClick={() => openInApp({ space })}>
-            Open space
+            {space.root ? 'Open space' : 'Download and open'}
           </ActionButton>
         </div>
       )}

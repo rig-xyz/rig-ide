@@ -5,7 +5,7 @@ import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
 import { log } from '@main/lib/logger';
 import { z } from 'zod';
 import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
-import { createAgentRigTools, createRigTools, FEED_RIG_TOOLS, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, READER_BINDING, READER_RIG_TOOLS, runRigTool, type RigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
+import { createAgentRigTools, createRigTools, FEED_RIG_TOOLS, HOME_BINDING, NAV_TOOL, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, READER_BINDING, READER_RIG_TOOLS, runRigTool, type RigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
 
 /**
  * The desktop's own MCP server for rig tools (`rig-tools.ts`), handed to each
@@ -81,11 +81,20 @@ function reply(res: ServerResponse, status: number, body?: Record<string, unknow
   res.end(body ? JSON.stringify(body) : undefined);
 }
 
-export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () => number; extraTools?: RigTool[] }): RigToolsServer {
+export function createRigToolsServer(deps: {
+  backend: RigToolsBackend;
+  now?: () => number;
+  extraTools?: RigTool[];
+  /** Names among `extraTools` that belong to Rig Alpha: listed to a space session only while it is on, like the Feed's. */
+  alphaOnly?: ReadonlySet<string>;
+}): RigToolsServer {
   // rig_space_describe lists them all, the browser tools included.
   const tools: RigTool[] = [...createRigTools(deps.backend, deps.now, () => spaceTools()), ...(deps.extraTools ?? [])];
   /** A space session's tools: the Feed's only while Rig Alpha is on, read per request so turning it off takes them away. */
-  const spaceTools = () => (deps.backend.alphaOn?.() === false ? tools.filter((t) => !FEED_RIG_TOOLS.has(t.name)) : tools);
+  const spaceTools = () =>
+    deps.backend.alphaOn?.() === false
+      ? tools.filter((t) => !FEED_RIG_TOOLS.has(t.name) && !deps.alphaOnly?.has(t.name))
+      : tools;
   // The background orchestrator's own tools, listed only in its session.
   const agentTools = createAgentRigTools(deps.backend);
   /** Session key → its token, so the same session always gets the same one. */
@@ -125,7 +134,8 @@ export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () 
         ? [...tools, ...agentTools].filter((t) => ORCHESTRATOR_RIG_TOOLS.has(t.name))
         : scope.bindingId === READER_BINDING
           ? agentTools.filter((t) => READER_RIG_TOOLS.has(t.name))
-          : spaceTools();
+          : // Arranging the person's list of spaces is Home's alone.
+            spaceTools().filter((t) => t.name !== NAV_TOOL || scope.bindingId === HOME_BINDING);
     for (const tool of listed) {
       mcp.registerTool(
         tool.name,

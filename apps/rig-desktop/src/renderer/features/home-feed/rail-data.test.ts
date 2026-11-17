@@ -100,7 +100,7 @@ describe('real spaces in the rail', () => {
     expect(allDead.lastActivityAt).toBeNull();
   });
 
-  it('lists at most two recent chats, and none older than three days', () => {
+  it('lists at most two unread chats, none older than three days, and none that is done and read', () => {
     const day = 24 * 60 * 60 * 1000;
     const space = realSpaceToRail(
       {
@@ -111,19 +111,23 @@ describe('real spaces in the rail', () => {
         status: undefined,
         members: null,
         chats: [
-          { id: 'c1', title: 'One', updatedAt: NOW - 1000 },
-          { id: 'c2', title: null, updatedAt: NOW - day },
-          { id: 'c3', title: 'Three', updatedAt: NOW - 2 * day },
-          { id: 'c4', title: 'Old', updatedAt: NOW - 5 * day },
+          { id: 'c0', title: 'Read', updatedAt: NOW - 500 },
+          { id: 'c1', title: 'One', updatedAt: NOW - 1000, unseen: true },
+          { id: 'c2', title: null, updatedAt: NOW - day, unseen: true },
+          { id: 'c3', title: 'Three', updatedAt: NOW - 2 * day, unseen: true },
+          { id: 'c4', title: 'Old', updatedAt: NOW - 5 * day, unseen: true },
         ],
       },
       'me',
       NOW
     );
     expect(space.sessions.map((s) => s.name)).toEqual(['One', 'Untitled session']);
+    expect(space.sessions[0]).toMatchObject({ state: 'done' });
+    // The space's own page still lists the one that was read.
+    expect(space.history?.map((s) => s.name)).toContain('Read');
   });
 
-  it('a chat still running shows as running, first, never "idle · Last active"; newest first after it', () => {
+  it('a chat still running shows as running, first; one that is done and read is not listed', () => {
     const space = realSpaceToRail(
       {
         bindingId: 'b1',
@@ -141,7 +145,7 @@ describe('real spaces in the rail', () => {
       'me',
       NOW
     );
-    expect(space.sessions.map((s) => s.name)).toEqual(['Draft the fix', 'Newer']);
+    expect(space.sessions.map((s) => s.name)).toEqual(['Draft the fix']);
     expect(space.sessions[0]).toMatchObject({ state: 'running', short: 'Working' });
     expect(space.lastActivityAt).toBe(NOW);
   });

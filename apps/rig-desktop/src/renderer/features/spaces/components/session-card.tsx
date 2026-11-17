@@ -25,6 +25,7 @@ import { Dialog, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
 import { DotMatrix, type DotMatrixActivity, type DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
+import { RunTriggerLine } from './run-trigger-line';
 import { cn } from '@renderer/lib/utils';
 import {
   connectorById,
@@ -38,7 +39,7 @@ import { ConnectPill } from './connectors-panel';
 import { permissionOptionRank, sortPermissionOptions } from '../approval-options';
 import { globalAgentsFor } from '../global-setup';
 import { ConnectorLogo } from '../logos';
-import { cardFromSummary, effectiveRunStatus, projectSessionCard } from '../projection';
+import { cardFromSummary, effectiveRunStatus, projectSessionCard, stepLabel } from '../projection';
 import { cardLiveness, quietFor } from '../run-liveness';
 import type { RunSummary } from '@shared/spaces/room-cache';
 import type { MessageReaction } from '@shared/spaces/reactions';
@@ -235,7 +236,7 @@ function StepRow({
           <Icon className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         )}
         <span className="min-w-0 truncate" title={pretty?.tooltip ?? step.title}>
-          {pretty ? pretty.text : (step.title ?? kind.past)}
+          {pretty ? pretty.text : (stepLabel(step) ?? kind.past)}
         </span>
         {step.private && <PrivateMark />}
       </div>
@@ -625,10 +626,6 @@ function RetryButton({
 }
 
 /** A running step's title for the live line; connector tools read as "Linear · list issues" (see `prettyStepTitle`). */
-function liveStepTitle(title: string | undefined, agent: AgentKind, args?: RigToolArgs): string | undefined {
-  return prettyStepTitle(title, agent, args)?.text ?? title;
-}
-
 /**
  * An agent run whose log is still loading (the Room shows its messages
  * first): the card's own frame — avatar, name line, summary line and a
@@ -841,7 +838,9 @@ export function SessionCard({
         ? `Working · ${liveSteps} ${liveSteps === 1 ? 'step' : 'steps'}`
         : 'Working'
     : card.currentStep
-      ? (liveStepTitle(card.currentStep.title, meta.agent, card.currentStep.args) ?? currentKind.live)
+      ? (prettyStepTitle(card.currentStep.title, meta.agent, card.currentStep.args)?.text ??
+        stepLabel(card.currentStep) ??
+        currentKind.live)
       : events.length > 0
         ? 'Thinking'
         : 'Starting';
@@ -863,6 +862,8 @@ export function SessionCard({
 
   return (
     <div className={cn(ROW_GRID, 'group relative py-1')} data-testid="session-card" data-status={status}>
+      {/* A run nobody typed a message for: what started it, above its card. */}
+      {card.trigger && <RunTriggerLine trigger={card.trigger} mine={mine} />}
       {continued ? (
         <RowTime message={{ createdAt: meta.startedAt }} short className="self-start justify-self-center pt-1" />
       ) : (

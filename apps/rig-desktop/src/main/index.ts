@@ -47,25 +47,28 @@ import {
 import { log } from './lib/logger';
 import { withRpcLogging } from './lib/rpc-logging';
 import { telemetryService } from './lib/telemetry';
+import { wireActiveMac } from './rig/active-mac-instance';
 import { dailyAgentCliInfo } from './rig/agent-run-failure-instance';
-import { startSyncProblemWatch } from './rig/sync-problems-instance';
 import { wireAgentRunnabilityPersistence } from './rig/agent-runnability';
 import {
   ensurePreferredRigBinInPath,
   installBundledRigSkill,
   logRigVersionSkew,
 } from './rig/bundled-cli';
-import { registerRigBridge } from './rig/intent-bridge';
 import { onRigEntryMoved } from './rig/files';
+import { registerRigBridge } from './rig/intent-bridge';
+import { startNotifications } from './rig/notifications/electron';
 import { createEntryMoveFollower } from './rig/path-refs';
 import { rigSettingsStore } from './rig/settings-instance';
-import { startNotifications } from './rig/notifications/electron';
-import { wireActiveMac } from './rig/active-mac-instance';
 import {
   spacesDispatchController,
   wireAgentsReporter,
   wireStalledRunCheck,
+  wireGardener,
+  wireViewRefresh,
 } from './rig/spaces/dispatch-controller-instance';
+import { startSyncProblemWatch } from './rig/sync-problems-instance';
+import { installViewSkills } from './rig/views/install-skills';
 import { bufferOpenFilePath } from './rig/workspace';
 import { rpcRouter } from './rpc';
 import { resolveUserEnv } from './utils/userEnv';
@@ -192,6 +195,12 @@ void app.whenReady().then(async () => {
   }
 
   rigSettingsStore.initialize();
+  // Rig Alpha: the skills for views and standing work, beside the rig skill; again when Alpha is turned on.
+  const installViewSkillsIfAlpha = () => {
+    if (rigSettingsStore.get().alphaEnabled) void installViewSkills();
+  };
+  installViewSkillsIfAlpha();
+  rigSettingsStore.subscribe(installViewSkillsIfAlpha);
   rigSettingsStore.subscribe((settings) => {
     events.emit(rigSettingsChangedChannel, settings);
   });
@@ -220,6 +229,8 @@ void app.whenReady().then(async () => {
   spacesDispatchController.initialize();
   wireAgentsReporter();
   wireStalledRunCheck();
+  wireViewRefresh();
+  wireGardener();
   startSyncProblemWatch();
   wireActiveMac();
 
@@ -308,7 +319,8 @@ function startRuntimeWithRetry(
     for (let attempt = 0; ; attempt += 1) {
       try {
         await start();
-        if (attempt > 0) log.info(`Started ${label} after ${attempt} retr${attempt === 1 ? 'y' : 'ies'}`);
+        if (attempt > 0)
+          log.info(`Started ${label} after ${attempt} retr${attempt === 1 ? 'y' : 'ies'}`);
         return;
       } catch (error) {
         const delayMs = retryDelaysMs[attempt];

@@ -1,6 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, Home as HomeIcon, MessageSquare, Settings as SettingsIcon, X } from 'lucide-react';
+import {
+  ChevronRight,
+  Home as HomeIcon,
+  MessageSquare,
+  Settings as SettingsIcon,
+  X,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useAgentMinimumAlert } from '@renderer/features/agents/use-agent-minimum-alert';
 import { ArtefactPane } from '@renderer/features/artifact/artefact-pane';
 import {
   closeActiveTab,
@@ -11,6 +18,9 @@ import {
   NO_TABS,
   openFileTab,
   openPageTab,
+  openViewTab,
+  syncViewTabs,
+  type ArtefactTab,
   openSessionTab,
   renamePageTab,
   moveFileTabs,
@@ -18,18 +28,26 @@ import {
   openFocusTab,
   type ArtefactTabsState,
 } from '@renderer/features/artifact/artefact-tabs';
-import { useAgentMinimumAlert } from '@renderer/features/agents/use-agent-minimum-alert';
+import { requestBrowserMode, requestView } from '@renderer/features/artifact/view-request';
 import { ChatPanel } from '@renderer/features/chat/chat-panel';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { useRigSessionStarts } from '@renderer/features/chat/session/start-in-space';
 import { DeepLinkJoinDialog } from '@renderer/features/deep-link/deep-link-join-dialog';
-import { ReportProblemDialogHost } from '@renderer/features/shell/report-problem-dialog';
-import { markBindingDeleted } from '@renderer/features/home/deleted-rig-store';
-import { Home } from '@renderer/features/home/home';
-import { NewHome } from '@renderer/features/home-feed/new-home';
-import { firstRunDebugAvailable, useFirstRunDebug } from '@renderer/features/first-run/debug/first-run-debug';
+import {
+  firstRunDebugAvailable,
+  useFirstRunDebug,
+} from '@renderer/features/first-run/debug/first-run-debug';
 import { FirstRun } from '@renderer/features/first-run/first-run';
 import { shouldShowFirstRun } from '@renderer/features/first-run/first-run-state';
+import { NewHome } from '@renderer/features/home-feed/new-home';
+import { markBindingDeleted } from '@renderer/features/home/deleted-rig-store';
+import { Home } from '@renderer/features/home/home';
+import { useAlphaEnabled } from '@renderer/features/home-feed/use-new-home-enabled';
+import { ActivityBell } from '@renderer/features/notifications/activity-bell';
+import {
+  useNotificationSummary,
+  useNotificationsInvalidation,
+} from '@renderer/features/notifications/use-notifications';
 import { Onboarding } from '@renderer/features/onboarding/onboarding';
 import { deriveOnboardingSteps } from '@renderer/features/onboarding/onboarding-state';
 import { onOpenSpaceRequest } from '@renderer/features/people/open-space-request';
@@ -42,23 +60,35 @@ import { RecoverySurface } from '@renderer/features/recovery/recovery-surface';
 import { reportRendererFailure } from '@renderer/features/recovery/renderer-error-reporting';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
-import { ActivityBell } from '@renderer/features/notifications/activity-bell';
-import { LayoutSwitcher, type RigLayout } from '@renderer/features/shell/layout-switcher';
-import { paneRevealClassName } from '@renderer/features/shell/pane-reveal';
+import type { SettingsPageId } from '@renderer/features/settings/settings-pages';
+import { SettingsSheet } from '@renderer/features/settings/settings-sheet';
 import { ChatDivider } from '@renderer/features/shell/chat-divider';
+import { CmdFRouteContext, type CmdFRoute } from '@renderer/features/shell/cmd-f-target';
+import { LayoutSwitcher, type RigLayout } from '@renderer/features/shell/layout-switcher';
 import {
   deriveNativeCloseTarget,
   type FocusedRigPane,
 } from '@renderer/features/shell/native-close-target';
-import { CmdFRouteContext, type CmdFRoute } from '@renderer/features/shell/cmd-f-target';
+import { readOpenRig, writeOpenRig } from '@renderer/features/shell/open-rig-memory';
+import { paneRevealClassName } from '@renderer/features/shell/pane-reveal';
+import { ReportProblemDialogHost } from '@renderer/features/shell/report-problem-dialog';
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
-import { SettingsSheet } from '@renderer/features/settings/settings-sheet';
-import type { SettingsPageId } from '@renderer/features/settings/settings-pages';
-import { RoomView } from '@renderer/features/spaces/components/room-view';
+import {
+  deriveBoundIsSpace,
+  deriveTopbarContext,
+  type TopbarContext,
+} from '@renderer/features/shell/topbar-context';
+import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
+import {
+  deriveNativeUpdateMenuAction,
+  useNativeMenuEvents,
+} from '@renderer/features/shell/use-native-menu-events';
+import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import type { RoomJumpRequest } from '@renderer/features/spaces/components/room-transcript';
-import { useNotificationSummary, useNotificationsInvalidation } from '@renderer/features/notifications/use-notifications';
+import { RoomView } from '@renderer/features/spaces/components/room-view';
 import { syncLastSeenFromServer } from '@renderer/features/spaces/room-read-marker';
 import { roomSourceCache } from '@renderer/features/spaces/room-source-cache';
+import { requestRoomTheme } from '@renderer/features/spaces/room-theme-request';
 import {
   onOpenSetupRequest,
   removeSpaceSetup,
@@ -66,21 +96,12 @@ import {
   useSpaceSetups,
 } from '@renderer/features/spaces/space-setup-store';
 import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
-import { readOpenRig, writeOpenRig } from '@renderer/features/shell/open-rig-memory';
-import { deriveBoundIsSpace, deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
-import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
-import {
-  deriveNativeUpdateMenuAction,
-  useNativeMenuEvents,
-} from '@renderer/features/shell/use-native-menu-events';
-import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
+import { openSideChat } from '@renderer/features/chat/session/side-chat';
+import { SpaceTabsRail } from '@renderer/features/views/space-tabs-rail';
+import { useTabPrefs } from '@renderer/features/views/tab-prefs';
+import { useSpaceViews } from '@renderer/features/views/use-space-views';
 import { onFileMove } from '@renderer/features/workspace/file-moves';
 import { onOpenFileRequest } from '@renderer/features/workspace/open-file-request';
-import { requestBrowserMode, requestView } from '@renderer/features/artifact/view-request';
-import { requestRoomTheme } from '@renderer/features/spaces/room-theme-request';
-import { canonicalPageUrl, webLinkLabel } from '@shared/spaces/links';
-import { commentFilePath, isHtmlPath, isRigFileUrl, rigFileUrl } from '@shared/spaces/rig-file';
-import { rigShowChannel, type RigShowRequest } from '@shared/spaces/show';
 import { PinnedCard } from '@renderer/features/workspace/pinned-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
@@ -90,25 +111,31 @@ import { Button } from '@renderer/lib/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
-import { rigOpenSpaceAtChannel, type OpenSpaceAt } from '@shared/rig/notifications';
 import { rigFileChangeChannel } from '@shared/rig/files';
-import { SPACE_SETUP_PENDING_REASON } from '@shared/rig/space-setup';
+import { FIRST_RUN_VERSION } from '@shared/rig/first-run';
+import { rigOpenSpaceAtChannel, type OpenSpaceAt } from '@shared/rig/notifications';
 import {
   type RigSettings,
   type RigSettingsLegacyImport,
   rigSettingsChangedChannel,
 } from '@shared/rig/settings';
-import { FIRST_RUN_VERSION } from '@shared/rig/first-run';
+import { SPACE_SETUP_PENDING_REASON } from '@shared/rig/space-setup';
+import { viewNameFromPath, type ViewManifest } from '@shared/rig/views';
 import {
   rigOpenRecentChannel,
   type RigOpenSource,
   type RigWorkspaceDetection,
 } from '@shared/rig/workspace';
+import { canonicalPageUrl, webLinkLabel } from '@shared/spaces/links';
+import { commentFilePath, isHtmlPath, isRigFileUrl, rigFileUrl } from '@shared/spaces/rig-file';
+import { rigShowChannel, type RigShowRequest } from '@shared/spaces/show';
 
 type Theme = 'dark' | 'light';
 /** What Settings' Appearance section offers: the two explicit themes, or
  * following the OS (`settings.theme: null` on the wire — see `shared/rig/settings.ts`). */
 type ThemePreference = Theme | 'system';
+
+const NO_VIEWS: readonly ViewManifest[] = [];
 
 function systemTheme(): Theme {
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
@@ -359,7 +386,9 @@ export function App() {
   useEffect(
     () =>
       onFileMove(({ from, to }) =>
-        setArtefact((current) => (to ? moveFileTabs(current, from, to) : closeFileTabs(current, from)))
+        setArtefact((current) =>
+          to ? moveFileTabs(current, from, to) : closeFileTabs(current, from)
+        )
       ),
     []
   );
@@ -391,7 +420,8 @@ export function App() {
       if (frame) cancelAnimationFrame(frame);
     };
   }, []);
-  const layout: RigLayout = windowWidth < NARROW_WINDOW_PX && rigLayout === 'split' ? 'files' : rigLayout;
+  const layout: RigLayout =
+    windowWidth < NARROW_WINDOW_PX && rigLayout === 'split' ? 'files' : rigLayout;
   const [focusedRigPane, setFocusedRigPane] = useState<FocusedRigPane>('chat');
   // Cmd-F goes to the pane you're in (`cmd-f-target.ts`): the chat's search
   // and the doc's find read this at key-press time.
@@ -578,7 +608,8 @@ export function App() {
       // while it's checked again, rather than blinking out to "Opening…"
       // and back (which also tore its Room view down and up).
       const current = folderRef.current;
-      const reopening = current.status === 'detected' && current.path === picked && current.result.bound;
+      const reopening =
+        current.status === 'detected' && current.path === picked && current.result.bound;
       if (!reopening) setFolder({ status: 'detecting', path: picked });
       setOpenedAsSpace(opts?.kind === 'space');
       setPendingActiveSessionId(opts?.activeSessionId ?? null);
@@ -749,7 +780,8 @@ export function App() {
   const spaceSetups = useSpaceSetups();
   const setup = setupId ? (spaceSetups.get(setupId) ?? null) : null;
   const showSetup =
-    !!setup && (folder.status === 'empty' || (folder.status === 'detecting' && folder.path === setup.path));
+    !!setup &&
+    (folder.status === 'empty' || (folder.status === 'detecting' && folder.path === setup.path));
   const setupTarget =
     showSetup && setup ? { root: setup.path, rootId: '', name: setup.name, bindingId: '' } : null;
   /** What the rig layout shows: the bound rig, or the space still being set up. */
@@ -761,7 +793,9 @@ export function App() {
   const boundRootForMemory = bound?.root ?? null;
   useEffect(() => {
     if (!boundRootForMemory) return;
-    writeOpenRig(boundIsSpace ? { path: boundRootForMemory, kind: 'space' } : { path: boundRootForMemory });
+    writeOpenRig(
+      boundIsSpace ? { path: boundRootForMemory, kind: 'space' } : { path: boundRootForMemory }
+    );
   }, [boundRootForMemory, boundIsSpace]);
   // A space opens Room-first: the Room takes the chat panel's place in the
   // rig layout (below), so files open beside it. No overlay.
@@ -784,7 +818,10 @@ export function App() {
     staleTime: 60_000,
   });
   const bindingDeleted =
-    bound && bindingStatusQuery.data && !bindingStatusQuery.data.success && bindingStatusQuery.data.error.kind === 'bindingDeleted'
+    bound &&
+    bindingStatusQuery.data &&
+    !bindingStatusQuery.data.success &&
+    bindingStatusQuery.data.error.kind === 'bindingDeleted'
       ? {
           deletedAt: bindingStatusQuery.data.error.deletedAt ?? '',
           deletedBy: bindingStatusQuery.data.error.deletedBy ?? { name: null, email: null },
@@ -811,7 +848,12 @@ export function App() {
         deletedBy: { name: deletedByNameForDeletion, email: deletedByEmailForDeletion },
       });
     }
-  }, [boundBindingIdForDeletion, deletedAtForDeletion, deletedByNameForDeletion, deletedByEmailForDeletion]);
+  }, [
+    boundBindingIdForDeletion,
+    deletedAtForDeletion,
+    deletedByNameForDeletion,
+    deletedByEmailForDeletion,
+  ]);
 
   // A different rig opened (or the folder closed): the open tabs belong to
   // the previous root.
@@ -877,6 +919,35 @@ export function App() {
   // `folder`, so reopening the SAME rig later (via `openPath`, from `Home`'s
   // RIGS row or a fresh Open Folder…) restores them exactly as left, without
   // this needing to touch that state at all.
+  // Opening a space from Home: the Home screen stays on screen while the space is found and
+  // drawn, then the two cross-fade, so the window never cuts to an empty dark pane. The browser's
+  // own view transition does it: it holds a picture of the old screen until this resolves.
+  const openSpaceFromHome = useCallback(
+    (picked: string, opts?: Parameters<typeof openPath>[1]) => {
+      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      const doc = document as Document & {
+        startViewTransition?: (update: () => Promise<void> | void) => unknown;
+      };
+      if (reduced || typeof doc.startViewTransition !== 'function') return openPath(picked, opts);
+      let opened: Promise<void> = Promise.resolve();
+      doc.startViewTransition(async () => {
+        opened = openPath(picked, opts);
+        const deadline = Date.now() + SPACE_OPEN_HOLD_MS;
+        // Until the space's own screen is there (its tabs), or the hold runs out.
+        while (
+          Date.now() < deadline &&
+          !document.querySelector('[data-testid="space-tabs-rail"]')
+        ) {
+          // A timer, not an animation frame: the browser draws no frames while this runs, so a
+          // frame callback would never fire and the transition would sit until its 4 s timeout.
+          await new Promise((resolve) => setTimeout(resolve, 16));
+        }
+      });
+      return opened;
+    },
+    [openPath]
+  );
+
   const goHome = useCallback(() => {
     openPathRequests.current.invalidate();
     setFolder({ status: 'empty' });
@@ -944,33 +1015,106 @@ export function App() {
   // means. The old open-vs-reveal split is gone with the resident tree.
   const boundBindingId = bound?.bindingId ?? null;
   const boundRoot = bound?.root ?? null;
+  // Rig views (spike, Rig Alpha, spaces only): `views/<name>/index.html` is a view, not a web page.
+  const viewsOn = alphaEnabled && boundIsSpace;
   const openFile = useCallback(
     (absPath: string) => {
-      if (boundRoot && boundBindingId) {
-        const relPath = relPathFromRoot(boundRoot, absPath);
-        if (relPath) void rpc.rig.seenState.markSeen({ bindingId: boundBindingId, relPath });
-      }
-      setRigLayout((current) => (current === 'chat' ? 'split' : current));
+      const relPath = boundRoot ? relPathFromRoot(boundRoot, absPath) : '';
+      if (relPath && boundBindingId)
+        void rpc.rig.seenState.markSeen({ bindingId: boundBindingId, relPath });
+      const viewName = viewsOn && relPath ? viewNameFromPath(relPath) : null;
+      // With the tabs rail: a view takes the whole centre; a file opens beside the Room, as it always has.
+      setRigLayout((current) => (viewsOn ? (viewName ? 'files' : 'split') : current === 'chat' ? 'split' : current));
       setFocusedRigPane('artifact');
-      setArtefact((current) => openFileTab(current, absPath));
+      setArtefact((current) =>
+        viewName ? openViewTab(current, viewName) : openFileTab(current, absPath)
+      );
     },
-    [boundRoot, boundBindingId]
+    [boundRoot, boundBindingId, viewsOn]
   );
+  // The space's views are tabs without anyone opening them: derived from its files, each time. A
+  // view that appears gets a tab, one that goes loses it; a tab the member closed stays closed
+  // until the space is opened again.
+  const spaceViews = useSpaceViews(viewsOn ? (bound?.rootId ?? null) : null);
+  // How this person arranged the space's tabs: their order, and the views they hid.
+  const [tabPrefs, setTabPrefs] = useTabPrefs(viewsOn ? (bound?.bindingId ?? null) : null);
+  const hiddenTabs = useRef(tabPrefs.hidden);
+  hiddenTabs.current = tabPrefs.hidden;
+  const knownViews = useRef<{ rootId: string; names: readonly string[] } | null>(null);
+  // Views that appeared while the space was open and have not been looked at: "new" on their tab.
+  const [unseenViews, setUnseenViews] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    if (!spaceViews) return;
+    const before =
+      knownViews.current?.rootId === spaceViews.rootId ? knownViews.current.names : null;
+    knownViews.current = spaceViews;
+    // A view the person hid stays out of the tabs when the space opens again.
+    const added = spaceViews.names.filter(
+      (name) => !before?.includes(name) && !hiddenTabs.current.includes(name)
+    );
+    const removed = (before ?? []).filter((name) => !spaceViews.names.includes(name));
+    if (added.length === 0 && removed.length === 0) return;
+    // The tabs rail always shows them, so nothing moves under the member: a view an agent just
+    // made is marked new, and they open it when they want.
+    setArtefact((current) => syncViewTabs(current, added, removed));
+    if (before !== null) setUnseenViews((current) => new Set([...current, ...added]));
+  }, [spaceViews]);
+  useEffect(() => setUnseenViews(new Set()), [bound?.rootId]);
+  // Looking at a view is what makes it seen.
+  const shownView = rigLayout !== 'chat' ? activeTab(artefact) : null;
+  const shownViewName = shownView?.kind === 'view' ? shownView.name : null;
+  useEffect(() => {
+    if (!shownViewName) return;
+    setUnseenViews((current) => {
+      if (!current.has(shownViewName)) return current;
+      const next = new Set(current);
+      next.delete(shownViewName);
+      return next;
+    });
+  }, [shownViewName]);
+  // With the tabs rail, the window shows a page (the Room, a view, a session) and, beside the Room
+  // only, a file or web page. The tab that is active decides which: a file never fills the centre,
+  // a view never sits beside the Room.
+  const besideRoomTab = useRef<ArtefactTab | null>(null);
+  const activeArtefactTab = activeTab(artefact);
+  useEffect(() => {
+    if (!viewsOn) return;
+    const tab = activeArtefactTab;
+    const isPage = tab?.kind === 'view' || tab?.kind === 'session';
+    if (tab && !isPage) besideRoomTab.current = tab;
+    if (besideRoomTab.current && !artefact.tabs.includes(besideRoomTab.current)) besideRoomTab.current = null;
+    if (rigLayout === 'split' && isPage) {
+      // The file beside the Room was closed and a page's tab took its place: stay in the Room.
+      const beside = besideRoomTab.current ?? artefact.tabs.find((t) => t.kind !== 'view' && t.kind !== 'session');
+      const index = beside ? artefact.tabs.indexOf(beside) : -1;
+      if (index !== -1) setArtefact((current) => activateTab(current, index));
+      else setRigLayout('chat');
+    } else if (rigLayout === 'files' && tab && !isPage) {
+      setRigLayout('split');
+    }
+  }, [viewsOn, activeArtefactTab, artefact.tabs, rigLayout]);
   // The file actions menu and a doc's own banner ask for a file by path.
   useEffect(() => onOpenFileRequest(openFile), [openFile]);
 
   /** A web page (a Claude artifact, a Google Doc) as a tab beside the Room. */
   const openPage = useCallback((url: string, title: string) => {
-    setRigLayout((current) => (current === 'chat' ? 'split' : current));
+    setRigLayout((current) => (viewsOn ? 'split' : current === 'chat' ? 'split' : current));
     setFocusedRigPane('artifact');
     setArtefact((current) => openPageTab(current, url, title));
+  }, [viewsOn]);
+  /** One of the space's views, filling the centre (the pill's standing work opens the view it is about). */
+  const openView = useCallback((name: string) => {
+    setRigLayout('files');
+    setFocusedRigPane('artifact');
+    setArtefact((current) => openViewTab(current, name));
   }, []);
+  const spaceViewInfo = spaceViews?.info ?? NO_VIEWS;
   /** One of a space's own sessions (yours alone), as a tab beside the Room. */
   const openSession = useCallback((sessionId: string) => {
-    setRigLayout((current) => (current === 'chat' ? 'split' : current));
+    setRigLayout((current) => (viewsOn ? 'files' : current === 'chat' ? 'split' : current));
     setFocusedRigPane('artifact');
     setArtefact((current) => openSessionTab(current, sessionId));
-  }, []);
+  }, [viewsOn]);
 
   // A space has no session panel: a session asked for on the way in (the
   // Feed's row, Home's rail) opens beside the Room once the space is bound.
@@ -1010,22 +1154,36 @@ export function App() {
   } | null>(null);
   const openSpaceAt = useCallback(
     async (target: OpenSpaceAt) => {
-      const paths = await rpc.rig.recent.resolveLocalPaths({ bindingIds: [target.bindingId] }).catch(() => ({}));
+      const paths = await rpc.rig.recent
+        .resolveLocalPaths({ bindingIds: [target.bindingId] })
+        .catch(() => ({}));
       let root: string | undefined = (paths as Record<string, string>)[target.bindingId];
       if (!root) {
         // Not on this computer yet: set it up the way Home's row does
         // ("Download"), then open it, rather than a click that does nothing.
         const name = target.spaceName ? `#${target.spaceName}` : 'the space';
         // One toast that becomes the outcome, not two stacked.
-        const progress = toast({ title: `Setting up ${name} on this computer…`, duration: Infinity });
+        const progress = toast({
+          title: `Setting up ${name} on this computer…`,
+          duration: Infinity,
+        });
         const attached = await rpc.rig.join
-          .attach({ bindingId: target.bindingId, ...(target.spaceName ? { name: target.spaceName } : {}) })
+          .attach({
+            bindingId: target.bindingId,
+            ...(target.spaceName ? { name: target.spaceName } : {}),
+          })
           .catch((err: unknown) => ({
             success: false as const,
             error: { message: err instanceof Error ? err.message : 'Could not set it up.' },
           }));
         if (!attached.success) {
-          toast({ id: progress, title: `Couldn't open ${name}`, description: attached.error.message, variant: 'destructive', duration: 6000 });
+          toast({
+            id: progress,
+            title: `Couldn't open ${name}`,
+            description: attached.error.message,
+            variant: 'destructive',
+            duration: 6000,
+          });
           return;
         }
         toast({ id: progress, title: `${name} is set up`, duration: 2000 });
@@ -1038,7 +1196,8 @@ export function App() {
       const file = relPath ? `${root.replace(/\/+$/, '')}/${relPath}` : null;
       if (relPath && file && target.path && isRigFileUrl(target.path) && isHtmlPath(relPath)) {
         requestBrowserMode(file);
-        if (target.messageId) requestView(rigFileUrl(target.bindingId, relPath), { thread: target.messageId });
+        if (target.messageId)
+          requestView(rigFileUrl(target.bindingId, relPath), { thread: target.messageId });
       }
       if (bound?.bindingId === target.bindingId) {
         if (file) openFile(file);
@@ -1091,7 +1250,8 @@ export function App() {
     () =>
       events.on(rigShowChannel, (request) => {
         setPendingShow({ ...request, at: Date.now() });
-        if (boundBindingIdRef.current !== request.bindingId) void openSpaceAtRef.current({ bindingId: request.bindingId });
+        if (boundBindingIdRef.current !== request.bindingId)
+          void openSpaceAtRef.current({ bindingId: request.bindingId });
       }),
     []
   );
@@ -1127,7 +1287,7 @@ export function App() {
     setRigLayout((current) => (current === 'chat' ? 'split' : current));
     setFocusedRigPane('artifact');
     setArtefact((current) => openFocusTab(current));
-  }, []);
+  }, [viewsOn]);
 
   /**
    * The Room for the bound rig. In a space it lives in the chat panel's slot:
@@ -1140,7 +1300,9 @@ export function App() {
     const tab = activeTab(artefact);
     if (tab?.kind !== 'file') return null;
     const base = root.replace(/\/+$/, '');
-    return tab.path.startsWith(`${base}/`) ? tab.path.slice(base.length + 1) : tab.path.split('/').pop() ?? null;
+    return tab.path.startsWith(`${base}/`)
+      ? tab.path.slice(base.length + 1)
+      : (tab.path.split('/').pop() ?? null);
   };
 
   const renderRoom = (target: NonNullable<typeof bound>, { inSpace }: { inSpace: boolean }) => (
@@ -1170,7 +1332,9 @@ export function App() {
                 void removeSpaceSetup(setup.id).then((removed) => {
                   toast({
                     title: `Removed #${setup.name}`,
-                    description: removed?.removedFolder ? 'Its empty folder is gone too.' : 'Its folder stays on this computer.',
+                    description: removed?.removedFolder
+                      ? 'Its empty folder is gone too.'
+                      : 'Its folder stays on this computer.',
                   });
                 });
                 goHome();
@@ -1183,13 +1347,15 @@ export function App() {
       // Room chrome round: doc-focus layout (the doc at full width) folds
       // the Room to a floating chip instead of unmounting it — see
       // `RoomView`'s own `collapsed` doc comment.
-      collapsed={inSpace && layout === 'files'}
+      // With the tabs rail, the Room stays whole behind a view: only its dock shows, as the pill back to it.
+      collapsed={inSpace && layout === 'files' && !viewsOn}
       // A doc beside the Room: an open thread takes the chat column's place.
       split={inSpace && layout === 'split'}
       onExpand={() => setRigLayout('split')}
       // A space's Room sits under the bare top bar: its transcript scrolls
       // up beneath it, and the bar blurs once it has.
-      topBar={inSpace ? { onScrolled: setRoomScrolled } : undefined}
+      // In its own sheet under the bar (the tabs rail), nothing scrolls beneath the bar.
+      topBar={inSpace && !viewsOn ? { onScrolled: setRoomScrolled } : undefined}
       onOpenFile={(path) => {
         if (!inSpace) setRoomPreviewOpen(false);
         // Agents report the files they changed by absolute path; doc comments by relative.
@@ -1203,6 +1369,8 @@ export function App() {
           : undefined
       }
       onOpenSession={inSpace ? openSession : undefined}
+      // Rig Alpha: the Room's dock is the pill down its right edge, with the space's standing work.
+      factory={inSpace && viewsOn ? { views: spaceViewInfo, onOpenView: openView } : undefined}
       // The space panel IS the rig's pinned card (a space is a rig binding),
       // plus the Room's agent rows. Full-width layout only, as for rigs.
       renderPanel={
@@ -1234,7 +1402,6 @@ export function App() {
       }
     />
   );
-
 
   // Layout-switcher round: switching to split/files with no tabs open has
   // nothing to show there yet — the direct door is the focus view, same as
@@ -1312,20 +1479,31 @@ export function App() {
   const [arrivedFromFirstRun, setArrivedFromFirstRun] = useState(false);
   // A simulated replay (always, with Alpha off: `FirstRun`) wrote nothing, so the real gate stays.
   const simulatedReplay = useRef(false);
-  simulatedReplay.current = firstRunDebug.replaying && (firstRunDebug.simulation !== null || !alphaEnabled);
+  simulatedReplay.current =
+    firstRunDebug.replaying && (firstRunDebug.simulation !== null || !alphaEnabled);
   const onFirstRunDone = useCallback(() => {
     if (!simulatedReplay.current)
-      setGate((current) => current && { ...current, firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null });
+      setGate(
+        (current) =>
+          current && { ...current, firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null }
+      );
     setArrivedFromFirstRun(true);
   }, []);
   // Rig Alpha's (Settings › Advanced) until it's seen, or replayed from the debug harness in this
   // window until the replay ends (only simulated with Alpha off: `FirstRun`).
   const firstRunOpen =
-    gate !== null && ((alphaEnabled && shouldShowFirstRun(gate.firstRunSeen)) || firstRunDebug.replaying);
-  // Replaying the first run from Settings closes Settings behind it. It can open again over the
-  // first run (its gear, or ⌘,), so Rig Alpha can always be turned off.
+    gate !== null &&
+    ((alphaEnabled && shouldShowFirstRun(gate.firstRunSeen)) || firstRunDebug.replaying);
+  // Starting the first run from Settings (turning Rig Alpha on, or a replay) closes Settings behind
+  // it. It can open again over the first run (its gear, or ⌘,), so Rig Alpha can always be turned off.
+  // The first run draws its own Settings sheet, and that one must never be created already open:
+  // opened and closed within one frame, the dialog stays in the page, invisible, and takes every
+  // click meant for the first run ("Get started" did nothing until the window was reloaded). So it
+  // may open only once Settings has been closed for the first run.
+  const [settingsClosedForFirstRun, setSettingsClosedForFirstRun] = useState(false);
   useEffect(() => {
     if (firstRunOpen) setSettingsOpen(false);
+    setSettingsClosedForFirstRun(firstRunOpen);
   }, [firstRunOpen]);
 
   // With Rig Alpha off, a new install gets the current release's onboarding, as before Alpha.
@@ -1418,7 +1596,7 @@ export function App() {
           onOpenSettings={openNativeSettings}
         />
         <SettingsSheet
-          open={settingsOpen}
+          open={settingsOpen && settingsClosedForFirstRun}
           onOpenChange={setSettingsOpen}
           themePreference={themePreference}
           onSetThemePreference={setThemePreference}
@@ -1446,103 +1624,116 @@ export function App() {
       }}
     >
       {!showNewHome && (
-      <Topbar
-        context={deriveTopbarContext(
-          rigView ? { name: rigView.name, bindingId: rigView.bindingId, path: rigView.root } : null
+        <Topbar
+          context={deriveTopbarContext(
+            rigView
+              ? { name: rigView.name, bindingId: rigView.bindingId, path: rigView.root }
+              : null
+          )}
+          variant={chrome.variant}
+          scrolled={rigView ? chrome.panesUnderBar && roomScrolled : mainScrolled}
+          onGoHome={goHome}
+          onOpenSettings={openSettings}
+          onOpenPath={openPath}
+          onOpenSpaceAt={(target) => void openSpaceAt(target)}
+          onOpenFolder={openFolder}
+          updateReady={isUpdateReady(updateStatus.state)}
+          autoEditRigName={justCreatedRig}
+          onAutoEditRigNameHandled={() => setJustCreatedRig(false)}
+          isSpace={rigViewIsSpace}
+          // Room chrome round: with a doc open beside a space's Room, the
+          // breadcrumb grows one more segment (`# growth › metrics.md ×`) —
+          // the same open tab `openDocIn` already names for the composer's
+          // pill, just surfaced up here too. `×` closes it and folds the
+          // layout back to the Room alone.
+          docBreadcrumb={
+            bound && boundIsSpace && layout !== 'chat'
+              ? (() => {
+                  const relPath = openDocIn(bound.root);
+                  if (!relPath) return null;
+                  return {
+                    name: relPath.split('/').pop() ?? relPath,
+                    onClose: () => setArtefact((current) => closeActiveTab(current)),
+                  };
+                })()
+              : null
+          }
+          // Session-first viewer: rig-level Share lives in the topbar now —
+          // the panel header that used to carry it went with the resident
+          // file browser. A space instead shows its member faces on the left
+          // of an accent Invite pill, one trigger, on the right (below).
+          shareSlot={
+            bound && !boundIsSpace ? (
+              <RigShareButton root={bound.root} name={bound.name} />
+            ) : undefined
+          }
+          sharePillSlot={
+            rigView && rigViewIsSpace ? (
+              <RigShareButton
+                root={rigView.root}
+                name={rigView.name}
+                variant="pill"
+                // A space still being set up can't invite anyone yet.
+                pendingReason={setupTarget ? SPACE_SETUP_PENDING_REASON : undefined}
+              />
+            ) : undefined
+          }
+          layoutSwitcher={
+            bound
+              ? {
+                  layout,
+                  hiddenTabCount: layout === 'chat' ? artefact.tabs.length : 0,
+                  onChange: applyLayout,
+                }
+              : null
+          }
+          hasOpenDoc={artefact.tabs.length > 0}
+          layoutSlot={
+            bound ? (
+              <div className="flex items-center gap-1.5">
+                {spacesEnabled && !boundIsSpace && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label="Chat (preview)"
+                          onClick={() => setRoomPreviewOpen(true)}
+                          className="flex size-7 items-center justify-center rounded-control text-text-muted transition-colors [-webkit-app-region:no-drag] hover:bg-bg-2"
+                        >
+                          <MessageSquare className="size-3.5" strokeWidth={1.5} />
+                        </button>
+                      }
+                    />
+                    <TooltipContent side="bottom">Chat (preview)</TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+            ) : undefined
+          }
+        />
+      )}
+      {bound &&
+        spacesEnabled &&
+        !boundIsSpace &&
+        roomPreviewOpen && (
+          // Dev entry point only (Spaces lane 2): the Room UI over a recorded
+          // feed, no relay dependency. Overlays the whole rig pane instead of
+          // plugging into `rigLayout` — `FixtureRoomSource` owns its own
+          // scripted state and has nothing to do with the artefact/chat tab
+          // machinery underneath.
+          <div className="absolute inset-0 top-10 z-40 flex flex-col bg-bg-0">
+            <button
+              type="button"
+              aria-label="Close chat preview"
+              onClick={() => setRoomPreviewOpen(false)}
+              className="absolute top-2 right-3 z-50 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-bg-2"
+            >
+              <X className="size-4" strokeWidth={1.5} />
+            </button>
+            {renderRoom(bound, { inSpace: false })}
+          </div>
         )}
-        variant={chrome.variant}
-        scrolled={rigView ? chrome.panesUnderBar && roomScrolled : mainScrolled}
-        onGoHome={goHome}
-        onOpenSettings={openSettings}
-        onOpenPath={openPath}
-        onOpenSpaceAt={(target) => void openSpaceAt(target)}
-        onOpenFolder={openFolder}
-        updateReady={isUpdateReady(updateStatus.state)}
-        autoEditRigName={justCreatedRig}
-        onAutoEditRigNameHandled={() => setJustCreatedRig(false)}
-        isSpace={rigViewIsSpace}
-        // Room chrome round: with a doc open beside a space's Room, the
-        // breadcrumb grows one more segment (`# growth › metrics.md ×`) —
-        // the same open tab `openDocIn` already names for the composer's
-        // pill, just surfaced up here too. `×` closes it and folds the
-        // layout back to the Room alone.
-        docBreadcrumb={
-          bound && boundIsSpace && layout !== 'chat'
-            ? (() => {
-                const relPath = openDocIn(bound.root);
-                if (!relPath) return null;
-                return {
-                  name: relPath.split('/').pop() ?? relPath,
-                  onClose: () => setArtefact((current) => closeActiveTab(current)),
-                };
-              })()
-            : null
-        }
-        // Session-first viewer: rig-level Share lives in the topbar now —
-        // the panel header that used to carry it went with the resident
-        // file browser. A space instead shows its member faces on the left
-        // of an accent Invite pill, one trigger, on the right (below).
-        shareSlot={bound && !boundIsSpace ? <RigShareButton root={bound.root} name={bound.name} /> : undefined}
-        sharePillSlot={
-          rigView && rigViewIsSpace ? (
-            <RigShareButton
-              root={rigView.root}
-              name={rigView.name}
-              variant="pill"
-              // A space still being set up can't invite anyone yet.
-              pendingReason={setupTarget ? SPACE_SETUP_PENDING_REASON : undefined}
-            />
-          ) : undefined
-        }
-        layoutSwitcher={
-          bound
-            ? { layout, hiddenTabCount: layout === 'chat' ? artefact.tabs.length : 0, onChange: applyLayout }
-            : null
-        }
-        hasOpenDoc={artefact.tabs.length > 0}
-        layoutSlot={
-          bound ? (
-            <div className="flex items-center gap-1.5">
-              {spacesEnabled && !boundIsSpace && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <button
-                        type="button"
-                        aria-label="Chat (preview)"
-                        onClick={() => setRoomPreviewOpen(true)}
-                        className="hover:bg-bg-2 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors [-webkit-app-region:no-drag]"
-                      >
-                        <MessageSquare className="size-3.5" strokeWidth={1.5} />
-                      </button>
-                    }
-                  />
-                  <TooltipContent side="bottom">Chat (preview)</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-          ) : undefined
-        }
-      />
-      )}
-      {bound && spacesEnabled && !boundIsSpace && roomPreviewOpen && (
-        // Dev entry point only (Spaces lane 2): the Room UI over a recorded
-        // feed, no relay dependency. Overlays the whole rig pane instead of
-        // plugging into `rigLayout` — `FixtureRoomSource` owns its own
-        // scripted state and has nothing to do with the artefact/chat tab
-        // machinery underneath.
-        <div className="bg-bg-0 absolute inset-0 top-10 z-40 flex flex-col">
-          <button
-            type="button"
-            aria-label="Close chat preview"
-            onClick={() => setRoomPreviewOpen(false)}
-            className="hover:bg-bg-2 absolute top-2 right-3 z-50 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors"
-          >
-            <X className="size-4" strokeWidth={1.5} />
-          </button>
-          {renderRoom(bound, { inSpace: false })}
-        </div>
-      )}
       <SettingsSheet
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
@@ -1551,7 +1742,11 @@ export function App() {
         initialPage={settingsPage}
       />
       {/* `rig://join/<secret>` from the website's invite page: confirm, then join and open. */}
-      <DeepLinkJoinDialog onOpenPath={(path, kind) => void openPath(path, { source: 'deeplink', ...(kind ? { kind } : {}) })} />
+      <DeepLinkJoinDialog
+        onOpenPath={(path, kind) =>
+          void openPath(path, { source: 'deeplink', ...(kind ? { kind } : {}) })
+        }
+      />
       {/* Help › Report a Problem. */}
       <ReportProblemDialogHost />
       {bound && bindingDeleted ? (
@@ -1590,161 +1785,251 @@ export function App() {
         // everything else. The chat wrapper is the same element across all
         // three layouts, so `ChatPanel` never remounts when it changes.
         <CmdFRouteContext.Provider value={getCmdFRoute}>
-        <div className={cn('flex min-h-0 flex-1', !chrome.panesUnderBar && 'pt-10')}>
           <div
-            data-rig-pane="chat"
-            style={{
-              order: CHAT_PANEL_ORDER,
-              // Capped so a narrow window always leaves room for the file.
-              width: layout === 'split' ? `min(${chatWidth}px, calc(100% - ${SIDE_PANEL_MIN}px))` : undefined,
-            }}
-            ref={chatPaneRef}
-            onPointerDownCapture={() => setFocusedRigPane('chat')}
-            onFocusCapture={() => setFocusedRigPane('chat')}
             className={cn(
-              'relative flex shrink-0 flex-col overflow-hidden bg-bg-1',
-              // The Room's own page color up under the bar.
-              chrome.panesUnderBar && 'bg-bg-0 pt-10',
-              layout === 'chat' && 'min-w-0 flex-1',
-              layout === 'files' &&
-                // Doc-focus round: a space's own rail (`SpaceRail`) carries
-                // 32px tiles plus breathing room, a touch wider than plain
-                // `ChatPanel`'s own icon-only collapsed rail below it.
-                (rigViewIsSpace ? 'border-border-hairline w-12 border-r' : 'border-border-hairline w-10 border-r')
+              'relative flex min-h-0 flex-1',
+              !chrome.panesUnderBar && 'pt-10',
+              viewsOn && 'bg-bg-0'
             )}
           >
-            {rigViewIsSpace ? (
-              // Room chrome round: kept mounted across all three layouts now
-              // (`RoomView`'s own `collapsed` prop draws the doc-focus
-              // floating chip instead) — its connection and live state stay
-              // up rather than tearing down and reconnecting on every
-              // layout flip.
-              <RecoveryBoundary scope="Space">{renderRoom(rigView, { inSpace: true })}</RecoveryBoundary>
-            ) : (
-            <RecoveryBoundary scope="Chat panel">
-              <ChatPanel
-                root={rigView.root}
-                rootId={rigView.rootId}
-                bindingId={rigView.bindingId}
-                name={rigView.name}
-                initialActiveSessionId={pendingActiveSessionId}
-                onOpenFile={openFile}
-                collapsed={layout === 'files'}
-                onExpand={() => {
-                  setFocusedRigPane('chat');
-                  // Narrow windows have no split: expanding goes to the chat.
-                  setRigLayout(windowWidth < NARROW_WINDOW_PX ? 'chat' : 'split');
-                }}
-                onNativeCloseActionChange={registerChatNativeClose}
-              />
-            </RecoveryBoundary>
+            {viewsOn && bound && (
+              <div style={{ order: -1 }} className="flex shrink-0">
+                <SpaceTabsRail
+                  bindingId={bound.bindingId}
+                  state={artefact}
+                  roomActive={layout !== 'files'}
+                  underBar={chrome.panesUnderBar}
+                  views={spaceViews?.info ?? []}
+                  unseenViews={unseenViews}
+                  onOpenRoom={() => {
+                    // Back to the Room, with the file or page that was beside it still there.
+                    const beside = besideRoomTab.current;
+                    const index = beside ? artefact.tabs.indexOf(beside) : -1;
+                    if (index === -1) return applyLayout('chat');
+                    setArtefact((current) => activateTab(current, index));
+                    setRigLayout('split');
+                  }}
+                  onActivateTab={(index) => {
+                    setArtefact((current) => activateTab(current, index));
+                    setFocusedRigPane('artifact');
+                    setRigLayout('files');
+                  }}
+                  onCloseTab={(index) => setArtefact((current) => closeTab(current, index))}
+                  rootId={bound.rootId ?? null}
+                  prefs={tabPrefs}
+                  onPrefs={setTabPrefs}
+                  onOpenView={openView}
+                  onNewSideChat={() => openSession(openSideChat(bound.bindingId, bound.root))}
+                />
+              </div>
             )}
-            {layout === 'chat' && !rigViewIsSpace && (
-              <PinnedCard
-                root={rigView.root}
-                rootId={rigView.rootId}
-                bindingId={rigView.bindingId}
-                name={rigView.name}
-                syncing={rigView.root === syncingRoot}
-                onOpenFile={(absPath) => openFile(absPath)}
-                onOpenFocus={openFocus}
-              />
-            )}
-          </div>
-
-          {layout === 'split' && (
-            // The handle IS the panel divider (no separate border-r on the
-            // chat wrapper above): a hairline at rest, a wide grab area, and
-            // double-click for the default split.
-            <ChatDivider
-              style={{ order: CHAT_RESIZE_HANDLE_ORDER }}
-              direction={CHAT_PANEL_ORDER === 1 ? 1 : -1}
-              measure={measureChat}
-              onResize={setChatWidth}
-              onResizeEnd={persistChatWidth}
-              onReset={resetChatWidth}
-            />
-          )}
-
-          {layout !== 'chat' &&
-            (() => {
-              const pane = (
-                <ArtefactPane
+            <div
+              data-rig-pane="chat"
+              style={{
+                order: CHAT_PANEL_ORDER,
+                // Capped so a narrow window always leaves room for the file.
+                width:
+                  layout === 'split'
+                    ? `min(${chatWidth}px, calc(100% - ${SIDE_PANEL_MIN}px))`
+                    : undefined,
+              }}
+              ref={chatPaneRef}
+              // The Room's dock over a view is one control: the way back to the Room.
+              onClickCapture={
+                viewsOn && layout === 'files'
+                  ? (event) => {
+                      event.stopPropagation();
+                      applyLayout('chat');
+                    }
+                  : undefined
+              }
+              onPointerDownCapture={() => setFocusedRigPane('chat')}
+              onFocusCapture={() => setFocusedRigPane('chat')}
+              className={cn(
+                'relative flex shrink-0 flex-col overflow-hidden bg-bg-1',
+                // The Room's own page color up under the bar.
+                chrome.panesUnderBar && 'bg-bg-0 pt-10',
+                layout === 'chat' && 'min-w-0 flex-1',
+                // The centre is one rounded sheet beside the rail, like Home's.
+                viewsOn &&
+                  layout !== 'files' &&
+                  cn(
+                    'space-sheet mb-2 overflow-hidden rounded-[20px] border !pt-0',
+                    layout === 'chat' && 'mr-2',
+                    chrome.panesUnderBar && 'mt-10'
+                  ),
+                layout === 'files' &&
+                  // Doc-focus round: a space's own rail (`SpaceRail`) carries
+                  // 32px tiles plus breathing room, a touch wider than plain
+                  // `ChatPanel`'s own icon-only collapsed rail below it.
+                  // With the tabs rail, the Room is one of its tabs: nothing of it stays beside a tab.
+                  (viewsOn
+                    ? cn(
+                        'room-as-pill pointer-events-none !absolute inset-y-0 right-0 left-[236px] z-10 !bg-transparent',
+                        // Same place as in the Room, whichever way the bar sits over the panes.
+                        !chrome.panesUnderBar && 'pt-10'
+                      )
+                    : rigViewIsSpace
+                      ? 'border-border-hairline w-12 border-r'
+                      : 'border-border-hairline w-10 border-r')
+              )}
+            >
+              {rigViewIsSpace ? (
+                // Room chrome round: kept mounted across all three layouts now
+                // (`RoomView`'s own `collapsed` prop draws the doc-focus
+                // floating chip instead) — its connection and live state stay
+                // up rather than tearing down and reconnecting on every
+                // layout flip.
+                <RecoveryBoundary scope="Space">
+                  {renderRoom(rigView, { inSpace: true })}
+                </RecoveryBoundary>
+              ) : (
+                <RecoveryBoundary scope="Chat panel">
+                  <ChatPanel
+                    root={rigView.root}
+                    rootId={rigView.rootId}
+                    bindingId={rigView.bindingId}
+                    name={rigView.name}
+                    initialActiveSessionId={pendingActiveSessionId}
+                    onOpenFile={openFile}
+                    collapsed={layout === 'files'}
+                    onExpand={() => {
+                      setFocusedRigPane('chat');
+                      // Narrow windows have no split: expanding goes to the chat.
+                      setRigLayout(windowWidth < NARROW_WINDOW_PX ? 'chat' : 'split');
+                    }}
+                    onNativeCloseActionChange={registerChatNativeClose}
+                  />
+                </RecoveryBoundary>
+              )}
+              {layout === 'chat' && !rigViewIsSpace && (
+                <PinnedCard
                   root={rigView.root}
                   rootId={rigView.rootId}
                   bindingId={rigView.bindingId}
-                  state={artefact}
-                  onActivateTab={(index) => setArtefact((current) => activateTab(current, index))}
-                  onCloseTab={(index) => setArtefact((current) => closeTab(current, index))}
-                  onMoveTab={(from, to) => setArtefact((current) => moveTab(current, from, to))}
+                  name={rigView.name}
+                  syncing={rigView.root === syncingRoot}
                   onOpenFile={(absPath) => openFile(absPath)}
                   onOpenFocus={openFocus}
-                  onPageTitle={(url, title) => setArtefact((current) => renamePageTab(current, url, title))}
                 />
-              );
-              return (
+              )}
+            </div>
+
+            {layout === 'split' &&
+              // The handle IS the panel divider (no separate border-r on the
+              // chat wrapper above): a hairline at rest, a wide grab area, and
+              // double-click for the default split.
+              (viewsOn ? (
+                // Two sheets side by side: the handle stays, its hairline goes (the gap is the divider).
                 <div
-                  data-rig-pane="artifact"
-                  style={{ order: ARTIFACT_PANEL_ORDER }}
-                  onPointerDownCapture={() => setFocusedRigPane('artifact')}
-                  onFocusCapture={() => setFocusedRigPane('artifact')}
-                  data-testid="artefact-pane"
-                  // Doc-focus round: a doc opening beside the Room/session
-                  // gets a short opacity+scale reveal instead of a jump
-                  // (`paneEntered`, set above). Transform + opacity only —
-                  // never `width` — so this can't fight the split handle's
-                  // own resize-drag perf fix (`ChatDivider` above):
-                  // that one still only ever commits a plain flex width,
-                  // never a measured/animated one. `motion-reduce:` drops
-                  // the transition to instant, per OS preference.
-                  className={cn(
-                    'flex min-h-0 min-w-0 flex-1 flex-col',
-                    chrome.panesUnderBar && 'pt-10',
-                    // A session's surface runs to the pane's edges, tab strip included, and
-                    // under the divider's right half, so it (and the strip's rule) meets the line.
-                    sessionTabActive && '-ml-1 bg-bg-1',
-                    paneRevealClassName(paneEntered)
-                  )}
+                  style={{ order: CHAT_RESIZE_HANDLE_ORDER }}
+                  className="flex shrink-0 [&_.bg-border-hairline]:bg-transparent"
                 >
-                  {pane}
+                  <ChatDivider
+                    direction={CHAT_PANEL_ORDER === 1 ? 1 : -1}
+                    measure={measureChat}
+                    onResize={setChatWidth}
+                    onResizeEnd={persistChatWidth}
+                    onReset={resetChatWidth}
+                  />
                 </div>
-              );
-            })()}
-        </div>
-        </CmdFRouteContext.Provider>
-      ) : (
-        // Round H2 feedback: `items-center justify-center` directly on the
-        // SCROLLING element clips content taller than the viewport at the
-        // TOP with no way to scroll to it — flexbox centers by giving the
-        // overflowing child a negative start offset, which a plain
-        // `overflow-auto` container can't scroll past (classic flexbox-
-        // centering-clips-the-start bug). Fix: `main` only scrolls (no
-        // alignment of its own); each branch's own min-h-full wrapper does
-        // the centering — when content fits, it centers exactly as before;
-        // when it's taller, the wrapper just grows and `main` scrolls it as
-        // ordinary block content, top included.
-        //
-        // Round: HOME RESTRUCTURE — `Home` itself owns its own full-width
-        // three-region layout now (the horizontal spread the new IA calls
-        // for), so it renders directly in `main`, not inside the centered
-        // narrow-card wrapper `FolderResult` still needs.
-        //
-        // Polish round: the topbar overlays this surface (see `Topbar`'s
-        // own comment) — `ref`/`onScroll` feed `mainScrolled` above, and
-        // `pt-10` replaces the clearance the old normal-flow topbar used to
-        // give it for free.
-        showNewHome ? (
-          <div className="min-h-0 flex-1">
-            <RecoveryBoundary scope="Home">
-              <NewHome
-                onOpenPath={openPath}
-                onContinueSession={continueSession}
-                onOpenSettings={(page) => openSettings(page)}
-                updateReady={isUpdateReady(updateStatus.state)}
-              />
-            </RecoveryBoundary>
+              ) : (
+                <ChatDivider
+                  style={{ order: CHAT_RESIZE_HANDLE_ORDER }}
+                  direction={CHAT_PANEL_ORDER === 1 ? 1 : -1}
+                  measure={measureChat}
+                  onResize={setChatWidth}
+                  onResizeEnd={persistChatWidth}
+                  onReset={resetChatWidth}
+                />
+              ))}
+
+            {layout !== 'chat' &&
+              (() => {
+                const pane = (
+                  <ArtefactPane
+                    root={rigView.root}
+                    rootId={rigView.rootId}
+                    bindingId={rigView.bindingId}
+                    state={artefact}
+                    onActivateTab={(index) => setArtefact((current) => activateTab(current, index))}
+                    onCloseTab={(index) => setArtefact((current) => closeTab(current, index))}
+                    onMoveTab={(from, to) => setArtefact((current) => moveTab(current, from, to))}
+                    onOpenFile={(absPath) => openFile(absPath)}
+                    onOpenFocus={openFocus}
+                    onPageTitle={(url, title) =>
+                      setArtefact((current) => renamePageTab(current, url, title))
+                    }
+                    railed={viewsOn}
+                  />
+                );
+                return (
+                  <div
+                    data-rig-pane="artifact"
+                    style={{ order: ARTIFACT_PANEL_ORDER }}
+                    onPointerDownCapture={() => setFocusedRigPane('artifact')}
+                    onFocusCapture={() => setFocusedRigPane('artifact')}
+                    data-testid="artefact-pane"
+                    // Doc-focus round: a doc opening beside the Room/session
+                    // gets a short opacity+scale reveal instead of a jump
+                    // (`paneEntered`, set above). Transform + opacity only —
+                    // never `width` — so this can't fight the split handle's
+                    // own resize-drag perf fix (`ChatDivider` above):
+                    // that one still only ever commits a plain flex width,
+                    // never a measured/animated one. `motion-reduce:` drops
+                    // the transition to instant, per OS preference.
+                    className={cn(
+                      'flex min-h-0 min-w-0 flex-1 flex-col',
+                      chrome.panesUnderBar && !viewsOn && 'pt-10',
+                      viewsOn &&
+                        cn(
+                          'space-sheet mr-2 mb-2 overflow-hidden rounded-[20px] border',
+                          chrome.panesUnderBar && 'mt-10'
+                        ),
+                      // A session's surface runs to the pane's edges, tab strip included, and
+                      // under the divider's right half, so it (and the strip's rule) meets the line.
+                      sessionTabActive && '-ml-1 bg-bg-1',
+                      paneRevealClassName(paneEntered)
+                    )}
+                  >
+                    {pane}
+                  </div>
+                );
+              })()}
           </div>
-        ) : (
+        </CmdFRouteContext.Provider>
+      ) : // Round H2 feedback: `items-center justify-center` directly on the
+      // SCROLLING element clips content taller than the viewport at the
+      // TOP with no way to scroll to it — flexbox centers by giving the
+      // overflowing child a negative start offset, which a plain
+      // `overflow-auto` container can't scroll past (classic flexbox-
+      // centering-clips-the-start bug). Fix: `main` only scrolls (no
+      // alignment of its own); each branch's own min-h-full wrapper does
+      // the centering — when content fits, it centers exactly as before;
+      // when it's taller, the wrapper just grows and `main` scrolls it as
+      // ordinary block content, top included.
+      //
+      // Round: HOME RESTRUCTURE — `Home` itself owns its own full-width
+      // three-region layout now (the horizontal spread the new IA calls
+      // for), so it renders directly in `main`, not inside the centered
+      // narrow-card wrapper `FolderResult` still needs.
+      //
+      // Polish round: the topbar overlays this surface (see `Topbar`'s
+      // own comment) — `ref`/`onScroll` feed `mainScrolled` above, and
+      // `pt-10` replaces the clearance the old normal-flow topbar used to
+      // give it for free.
+      showNewHome ? (
+        <div className="min-h-0 flex-1">
+          <RecoveryBoundary scope="Home">
+            <NewHome
+              onOpenPath={openSpaceFromHome}
+              onContinueSession={continueSession}
+              onOpenSettings={(page) => openSettings(page)}
+              updateReady={isUpdateReady(updateStatus.state)}
+            />
+          </RecoveryBoundary>
+        </div>
+      ) : (
         <main
           onScroll={(event) => setMainScrolled(event.currentTarget.scrollTop > 4)}
           className="min-h-0 flex-1 overflow-y-auto pt-10"
@@ -1768,7 +2053,6 @@ export function App() {
             </div>
           )}
         </main>
-        )
       )}
     </div>
   );
@@ -1789,6 +2073,9 @@ const TOPBAR_BLUR_MASK = 'linear-gradient(to bottom, #000 55%, transparent)';
  * beneath it. Settings is a modal and onboarding has no bar, so neither
  * comes through here. Exported for `topbar.test.tsx`.
  */
+/** How long Home is held on screen, at most, while the space it opens is found and drawn. */
+const SPACE_OPEN_HOLD_MS = 900;
+
 export function topbarChrome(view: { isSpace: boolean; layout: RigLayout } | null): {
   variant: 'bare' | 'rig';
   panesUnderBar: boolean;
@@ -1862,7 +2149,11 @@ export function Topbar({
    * only) is a fact this component owns, not a blob the caller pre-built.
    * `null` while no rig is bound.
    */
-  layoutSwitcher?: { layout: RigLayout; hiddenTabCount: number; onChange: (next: RigLayout) => void } | null;
+  layoutSwitcher?: {
+    layout: RigLayout;
+    hiddenTabCount: number;
+    onChange: (next: RigLayout) => void;
+  } | null;
   /** Room chrome round: whether the artefact pane has any open tabs — the layout switcher's gate for a space (see `layoutSwitcher`). */
   hasOpenDoc?: boolean;
   /** Layout-switcher round: anything else in the same cluster (rig view only) — currently just the "Room (preview)" toggle — rendered after the switcher, ahead of the account/gear icons. */
@@ -1876,6 +2167,7 @@ export function Topbar({
   /** Room chrome round: the doc open beside a space's Room, if any — extends the breadcrumb with `› name ×`. */
   docBreadcrumb?: { name: string; onClose: () => void } | null;
 }) {
+  const alphaOn = useAlphaEnabled();
   return (
     // The window is `titleBarStyle: 'hiddenInset'` (main/app/window.ts) — no
     // native title bar, just the traffic lights at (10, 10). This header is
@@ -1977,7 +2269,7 @@ export function Topbar({
                   type="button"
                   onClick={docBreadcrumb.onClose}
                   aria-label="Close doc"
-                  className="hover:bg-bg-2 hover:text-text-primary flex size-4 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors [-webkit-app-region:no-drag]"
+                  className="flex size-4 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors [-webkit-app-region:no-drag] hover:bg-bg-2 hover:text-text-primary"
                 >
                   <X className="size-3" strokeWidth={1.5} />
                 </button>
@@ -2012,7 +2304,10 @@ export function Topbar({
         {/* Invites addressed to me, then Activity (mentions, replies, your
             agents' news). Renders nothing signed out; accent count dot only
             when something is waiting. Sits between the avatar and the gear. */}
-        <ActivityBell onOpenPath={onOpenPath} onOpenTarget={(target) => onOpenSpaceAt?.(target)} />
+        {/* With Rig Alpha the bell is put away for now: what needs the person is the Feed's and each space's own job. */}
+        {!alphaOn && (
+          <ActivityBell onOpenPath={onOpenPath} onOpenTarget={(target) => onOpenSpaceAt?.(target)} />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
@@ -2079,7 +2374,11 @@ export function FolderResult({
   // pretending it's just "not a rig."
   if (folder.status === 'detected' && !folder.result.bound && folder.result.foreignAccount) {
     return (
-      <ForeignAccountCard foreignAccount={folder.result.foreignAccount} onRetryOpen={onRetryOpen} onCancel={onCancel} />
+      <ForeignAccountCard
+        foreignAccount={folder.result.foreignAccount}
+        onRetryOpen={onRetryOpen}
+        onCancel={onCancel}
+      />
     );
   }
   // Loose-ends round: a LOCAL-ONLY rig (rig.toml, no binding — see
@@ -2366,7 +2665,12 @@ function DeletedRigCard({
     setBusy(true);
     setError(null);
     try {
-      const result = await rpc.rig.rigs.delete({ bindingId, path, mode: 'local', trashFolder: trash });
+      const result = await rpc.rig.rigs.delete({
+        bindingId,
+        path,
+        mode: 'local',
+        trashFolder: trash,
+      });
       if (!result.success) {
         setError(result.error.message);
         return;

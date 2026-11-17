@@ -1,0 +1,162 @@
+{
+  "factory": "Content factory · X",
+  "tab": {
+    "sub": "2 to review",
+    "count": {
+      "usr_abc123": 2,
+      "usr_sam": 1
+    }
+  },
+  "read_at": "2026-11-12T16:10:00Z",
+  "rig": {
+    "summary": "Two drafts from this week's launch notes. The pricing one claims a number the site does not show yet, so check it before approving."
+  },
+  "items": [
+    {
+      "id": "p1",
+      "for_id": "usr_abc123",
+      "for_name": "Dylan",
+      "since": "2026-11-12T13:40:00Z",
+      "label": "Draft · X post",
+      "text": "Making got easy. Shipping didn't.\n\nWhen anyone can build anything, the hard part is deciding what is worth making.",
+      "source": {
+        "label": "manifesto-v3.md",
+        "url": null
+      },
+      "actions": [
+        {
+          "act": "approve",
+          "label": "Post it",
+          "primary": true
+        },
+        {
+          "act": "rewrite",
+          "label": "Rewrite"
+        },
+        {
+          "act": "drop",
+          "label": "Drop"
+        }
+      ]
+    },
+    {
+      "id": "p2",
+      "for_id": "usr_abc123",
+      "for_name": "Dylan",
+      "since": "2026-11-12T15:41:00Z",
+      "label": "Draft · X post",
+      "text": "Plans start at $12 a seat.",
+      "check": "The site still says $15.",
+      "source": {
+        "label": "Pricing thread",
+        "url": "https://example.com/thread/42"
+      },
+      "actions": [
+        {
+          "act": "approve",
+          "label": "Post it",
+          "primary": true
+        },
+        {
+          "act": "rewrite",
+          "label": "Rewrite"
+        },
+        {
+          "act": "drop",
+          "label": "Drop"
+        }
+      ]
+    },
+    {
+      "id": "p3",
+      "for_id": "usr_sam",
+      "for_name": "Sam",
+      "since": "2026-11-12T10:15:00Z",
+      "label": "Draft · X post",
+      "text": "Sync fix is in: your event count no longer jumps after Sync now.",
+      "source": {
+        "label": "#bug-bash",
+        "url": null
+      }
+    },
+    {
+      "id": "p0",
+      "for_id": "usr_abc123",
+      "for_name": "Dylan",
+      "since": "2026-11-11T09:00:00Z",
+      "text": "A view is a page your agent writes into the space.",
+      "source": {
+        "label": "notes/views.md",
+        "url": null
+      },
+      "done": {
+        "kind": "approved",
+        "label": "Posted"
+      }
+    },
+    {
+      "id": "pm1",
+      "for_id": "usr_abc123",
+      "for_name": "Dylan",
+      "since": "2026-11-10T09:00:00Z",
+      "text": "Ten reasons agents need a shared room.",
+      "source": {
+        "label": "notes/views.md",
+        "url": null
+      },
+      "done": {
+        "kind": "dropped",
+        "label": "Dropped"
+      }
+    },
+    {
+      "id": "p4",
+      "for_id": "usr_abc123",
+      "for_name": "Dylan",
+      "since": "2026-11-12T16:00:00Z",
+      "later": "next pass",
+      "text": "Why we kept the rails small.\n\nThe longer the contract, the less anyone reads it.",
+      "source": {
+        "label": "notes/rails.md",
+        "url": null
+      }
+    },
+    {
+      "id": "p5",
+      "for_id": "usr_abc123",
+      "for_name": "Dylan",
+      "since": "2026-11-12T16:00:00Z",
+      "later": "next pass",
+      "text": "Building in public, week three.",
+      "source": {
+        "label": "#launch",
+        "url": null
+      }
+    }
+  ],
+  "left_out": [
+    "The partner announcement: not public yet"
+  ],
+  "ask": {
+    "id": "schedule",
+    "for_id": "usr_abc123",
+    "label": "Setup · schedule",
+    "title": "Run this every hour while Rig is open",
+    "why": "Until you choose, the factory runs only when you ask.",
+    "actions": [
+      {
+        "act": "schedule-1h",
+        "label": "Yes, every hour",
+        "primary": true
+      },
+      {
+        "act": "schedule-1d",
+        "label": "Daily"
+      },
+      {
+        "act": "schedule-off",
+        "label": "Only when I ask"
+      }
+    ]
+  }
+}

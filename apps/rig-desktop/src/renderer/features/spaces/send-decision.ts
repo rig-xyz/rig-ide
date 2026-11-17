@@ -8,7 +8,8 @@ import type { AgentKind } from './types';
  * In order: an @tag of your agent asks it (unchanged from before routing);
  * a choice you made in the button's menu sticks for the draft; the one pill
  * for your agent without an @ (a reply to its turn, or its name first)
- * asks it; then the relay's routing (`DraftPreview.action`) asks your agent
+ * asks it; alone with your agent (`soloAgent`) a plain message is for it;
+ * then the relay's routing (`DraftPreview.action`) asks your agent
  * when it says `ask`. Anything else is a plain send. Choosing Send yourself
  * while the relay would have asked or suggested your agent marks the
  * message `route: 'none'`, so the router leaves it alone.
@@ -42,6 +43,18 @@ export function routeFromPreview(preview: DraftPreview, selfUserId: string): Com
   return { action: preview.action, agent };
 }
 
+/** Alone with your agent: nobody else has joined or been invited, so a plain message is for it. One agent on this Mac: that one. Several: Claude. */
+export function soloAgent(input: {
+  people: number;
+  /** People invited and not yet in: one is enough to turn the rule off. */
+  invited?: number;
+  runnable: readonly AgentKind[];
+}): AgentKind | null {
+  if (input.people !== 1 || (input.invited ?? 0) > 0) return null;
+  if (input.runnable.length === 1) return input.runnable[0]!;
+  return input.runnable.includes('claude') ? 'claude' : null;
+}
+
 export function decideSend(input: {
   text: string;
   /** Your agents this composer can ask. */
@@ -58,6 +71,8 @@ export function decideSend(input: {
   tagged: AgentKind | null;
   /** Your agent the one no-@ pill names (a reply to its turn, or called by name). */
   pill: AgentKind | null;
+  /** Alone with your agent (see `soloAgent`): the agent a plain message is for; null or absent otherwise. */
+  solo?: AgentKind | null;
   route: ComposerRoute | null;
   override: SendOverride | null;
   /** A Reply you chose is on: a plain send reads "Reply". */
@@ -85,10 +100,11 @@ export function decideSend(input: {
   if (own(input.tagged)) return askOrPlain(input.tagged);
   if (input.override?.kind === 'agent' && own(input.override.agent)) return askOrPlain(input.override.agent);
   if (input.override?.kind === 'send') {
-    const wouldRoute = input.route?.action === 'ask' || input.route?.action === 'suggest';
+    const wouldRoute = input.route?.action === 'ask' || input.route?.action === 'suggest' || own(input.solo);
     return plain(wouldRoute ? { route: 'none' } : {});
   }
   if (own(input.pill)) return askOrPlain(input.pill);
+  if (own(input.solo)) return askOrPlain(input.solo);
   if (input.route?.action === 'ask' && own(input.route.agent)) return askOrPlain(input.route.agent);
   return plain();
 }

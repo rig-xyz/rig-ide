@@ -109,6 +109,19 @@ describe('claimOne / claimAndDispatchQueued', () => {
     expect(store.patches).toEqual([{ id: 'req1', status: 'running', runId: 'run-1' }]);
   });
 
+  it('settles a repeated request as done with the run that already answered, posting nothing', async () => {
+    const store = makeSharedStore([makeRequest()]);
+    const posted: unknown[] = [];
+    const api = { ...store.apiFor(), postMessage: async (_b: string, input: unknown) => {
+      posted.push(input);
+      return ok({} as never);
+    } };
+    await claimOne(api, 'device-a', async (): Promise<ClaimDispatchResult> => ({ duplicateOf: 'run-1' }), makeRequest());
+    expect(store.get('req1')?.status).toBe('done');
+    expect(store.get('req1')?.runId).toBe('run-1');
+    expect(posted).toEqual([]);
+  });
+
   it('marks the request failed when local dispatch fails, without throwing', async () => {
     const store = makeSharedStore([makeRequest()]);
     await claimOne(

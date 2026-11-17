@@ -1,0 +1,87 @@
+<!doctype html>
+<!-- Intake: what came in, and what Rig did with each piece. Two sides per row, joined by an arrow, so a person can
+     check Rig's work at a glance and undo it. Newest first. Data shape: templates/intake.json.
+
+     Left (.rv-flow-in): where it came from and when (a mono line), then the thing itself in a sentence.
+     A thread has `links` (0, 1 or several: [{label, url}]); the meta line joins them with " · " and wraps as a unit,
+     so the time never lands between names. With no links it shows `channel` as plain text.
+     Right (.rv-flow-out): a pill saying what Rig did (color = kind of action), then the result in words. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intake</title>
+<link rel="stylesheet" href="../_rig/rig.css">
+<script src="../_rig/rig-view.js"></script>
+<style>
+  .rv-flow-in > .rv-card-meta { flex-wrap: wrap; row-gap: 2px; }
+  .rv-flow-in .src { min-width: 0; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main class="rv-page" id="root"></main>
+<script>
+const { h, raw, note, pill, ago, time, state } = rig;
+state.kind ??= 'all';
+state.shown ??= 10;
+
+// What Rig did -> pill tone. Color is the kind of action, so the column of pills reads as a summary.
+const KINDS = { linked: 'accent', opened: 'ok', hypothesis: 'violet', answered: '', skipped: 'quiet' };
+// Links of one thread: 0, 1 or several. Falls back to the single channel/url pair.
+const linksOf = (t) => (t.links && t.links.length ? t.links : t.channel ? [{ label: t.channel, url: t.url }] : []);
+const src = (t) => linksOf(t).map((l, i) => h`${i ? ' · ' : ''}${l.url ? h`<a href="${l.url}">${l.label}</a>` : l.label}`);
+const ARROW = raw('<svg class="rv-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>');
+
+rig.mount((d) => {
+  const all = [...d.threads].sort((a, b) => new Date(b.at) - new Date(a.at));
+  const kinds = [...new Set(all.map((t) => t.did.kind))];
+  const list = all.filter((t) => state.kind === 'all' || t.did.kind === state.kind);
+  const shown = list.slice(0, state.shown);
+  const n = (k) => all.filter((t) => t.did.kind === k).length;
+  // The header counts what Rig did, in order of how much it changed things.
+  const tally = ['linked', 'opened', 'answered', 'skipped'].filter(n).map((k) => `${k} ${n(k)}`).join(', ');
+
+  return h`
+  <header class="rv-head"><div>
+    <span class="rv-eyebrow">${d.source}</span>
+    <h1 class="rv-title">Intake</h1>
+    <span class="rv-meta" data-key="meta">${all.length} threads since ${time(d.since)}${tally ? ` · Rig ${tally}` : ''} · read ${ago(d.read_at)}</span>
+  </div></header>
+
+  ${note(d.rig && d.rig.summary)}
+
+  ${all.length ? h`
+  <div class="rv-chips">${[['all', 'All', all.length], ...kinds.map((k) => [k, k[0].toUpperCase() + k.slice(1), n(k)])].map(([k, label, c]) =>
+    h`<button class="rv-chip" data-kind="${k}" aria-pressed="${state.kind === k}">${label}<span class="n">${c}</span></button>`)}</div>
+
+  <div class="rv-flow-head"><span>What came in</span><span></span><span>What Rig did</span></div>
+  <div class="rv-list">${shown.map((t) => h`
+    <div class="rv-flow" data-key="thread-${t.id}">
+      <div class="rv-flow-in">
+        <div class="rv-card-meta"><span class="src">${src(t)}</span><span class="muted">${time(t.at)} · ${t.replies === 1 ? '1 reply' : `${t.replies} replies`}</span></div>
+        <div class="rv-flow-text">${t.text}</div>
+      </div>
+      ${ARROW}
+      <div class="rv-flow-out">
+        ${pill(t.did.label, KINDS[t.did.kind])}
+        <span>${t.did.result}</span>
+        ${t.did.kind === 'skipped'
+          ? h`<button class="rv-btn quiet sm" data-act="use" data-id="${t.id}">Use it</button>`
+          : h`<button class="rv-btn quiet sm" data-act="undo" data-id="${t.id}">Undo</button>`}
+      </div>
+    </div>`)}</div>
+  ${list.length > shown.length ? h`<button class="rv-btn" style="align-self:flex-start" data-more>Show ${list.length - shown.length} more</button>` : ''}
+  ${list.length ? '' : h`<div class="rv-empty"><b>Nothing of this kind</b>Pick another filter above.</div>`}`
+  : h`<div class="rv-empty"><b>Nothing came in yet</b>Threads from ${d.source} appear here, each with what Rig did with it.</div>`}
+
+  ${all.length ? h`<div class="rv-foot">Summaries are Rig's words, not the thread's. Open the channel link to read the original.</div>` : ''}`;
+});
+
+document.addEventListener('click', (e) => {
+  const k = e.target.closest('[data-kind]');
+  if (k) { state.kind = k.dataset.kind; state.shown = 10; rig.rerender(); }
+  if (e.target.closest('[data-more]')) { state.shown += 10; rig.rerender(); }
+});
+</script>
+</body>
+</html>

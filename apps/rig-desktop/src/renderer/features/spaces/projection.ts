@@ -27,8 +27,10 @@ import {
   DETAILS_HIDDEN_EVENT,
   isRoomSees,
   PRIVATE_PROGRESS_EVENT,
+  parseRunTrigger,
   RUN_PRIVACY_EVENT,
   RUN_RETRIED_EVENT,
+  RUN_TRIGGER_EVENT,
 } from '@shared/spaces/room-sees';
 import type {
   RoomSnapshot,
@@ -43,6 +45,25 @@ import type {
 interface CardState extends SessionCard {
   /** The messageId of the agent_message_chunk run currently being accumulated into `finalAnswer` — a new messageId resets the buffer instead of appending to the previous one. */
   _lastMessageId?: string;
+}
+
+/**
+ * What a step is for, in the agent's own words: the `description` Claude writes beside a command
+ * ("List the views' files"). One short line of prose, or nothing.
+ */
+export function stepDescription(rawInput: unknown): string | undefined {
+  if (!rawInput || typeof rawInput !== 'object') return undefined;
+  const value = (rawInput as { description?: unknown }).description;
+  if (typeof value !== 'string') return undefined;
+  const text = value.replace(/\s+/g, ' ').trim();
+  return text && text.length <= 160 ? text : undefined;
+}
+
+/** A step's line in the card: the agent's own words for it when it gave some, else the tool's title in plain words. */
+export function stepLabel(step: { title?: string; description?: string }): string | undefined {
+  if (step.description) return step.description;
+  if (step.title === 'ToolSearch') return 'Finding the right tool';
+  return step.title;
 }
 
 export function newSessionCard(): SessionCard {
@@ -61,6 +82,7 @@ export function newSessionCard(): SessionCard {
     failureReason: null,
     connectorGaps: [],
     privacy: null,
+    trigger: null,
     privateSteps: 0,
     detailsHidden: false,
     reacted: [],
@@ -207,8 +229,16 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
       if (p.private === true) step.private = true;
       const args = rigToolArgs(step.title, p.rawInput);
       if (args) step.args = args;
+      const description = stepDescription(p.rawInput);
+      if (description) step.description = description;
       state.steps.push(step);
-      state.currentStep = { toolCallId, title: step.title, kind: step.kind, args: step.args };
+      state.currentStep = {
+        toolCallId,
+        title: step.title,
+        description: step.description,
+        kind: step.kind,
+        args: step.args,
+      };
       recordEditOutputs(state, p, truncated);
       break;
     }
@@ -224,7 +254,15 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
         // Claude streams a tool's input in after the call opens.
         const args = rigToolArgs(step.title, p.rawInput);
         if (args) step.args = args;
-        state.currentStep = { toolCallId, title: step.title, kind: step.kind, args: step.args };
+        const description = stepDescription(p.rawInput);
+        if (description) step.description = description;
+        state.currentStep = {
+          toolCallId,
+          title: step.title,
+          description: step.description,
+          kind: step.kind,
+          args: step.args,
+        };
       }
       recordEditOutputs(state, p, truncated);
       break;
@@ -320,6 +358,10 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
       if (isRoomSees(p.level)) state.privacy = p.level;
       break;
     }
+    case RUN_TRIGGER_EVENT: {
+      state.trigger = parseRunTrigger(p) ?? state.trigger;
+      break;
+    }
     case PRIVATE_PROGRESS_EVENT: {
       if (typeof p.steps === 'number') state.privateSteps = Math.max(state.privateSteps, p.steps);
       break;
@@ -385,6 +427,7 @@ export function summarizeCard(card: SessionCard): RunSummary {
     detailsHidden: card.detailsHidden,
     lastSeq: card.lastSeq,
     ...(card.reacted.length > 0 ? { reacted: card.reacted } : {}),
+    ...(card.trigger ? { trigger: card.trigger } : {}),
   };
 }
 
@@ -404,6 +447,7 @@ export function cardFromSummary(summary: RunSummary): SessionCard {
     detailsHidden: summary.detailsHidden,
     lastSeq: summary.lastSeq,
     reacted: summary.reacted ?? [],
+    trigger: parseRunTrigger(summary.trigger),
   };
 }
 

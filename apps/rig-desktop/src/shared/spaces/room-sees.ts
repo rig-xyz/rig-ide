@@ -41,6 +41,46 @@ export function roomSeesFor(
 
 /** Recorded first in every run: the level it ran at, so other members' cards know why details are missing. */
 export const RUN_PRIVACY_EVENT = 'run_privacy';
+/**
+ * Recorded at the start of a run nobody typed a message for: what started it. A press in a view
+ * (`by: 'view'`, with the tab, the words on the button, the item it was pressed on and the line of
+ * context the person added), the view's schedule (`clock`), or Rig's own look over the space
+ * (`gardener`). The Room shows it above the run's card.
+ */
+export const RUN_TRIGGER_EVENT = 'run_trigger';
+export type RunTrigger = {
+  by: 'view' | 'clock' | 'gardener';
+  /** The view's folder name; a press on its line in the Room opens that tab. */
+  view?: string;
+  label?: string;
+  item?: string;
+  note?: string;
+};
+
+const oneLine = (value: unknown, max: number): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const text = value.replace(/\s+/g, ' ').trim().slice(0, max).trim();
+  return text || undefined;
+};
+
+/** A trigger from untyped input (an event payload, a view's message): only the fields above, each one short line. */
+export function parseRunTrigger(value: unknown): RunTrigger | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  if (v.by !== 'view' && v.by !== 'clock' && v.by !== 'gardener') return null;
+  const view = typeof v.view === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(v.view) ? v.view : undefined;
+  const label = oneLine(v.label, 60);
+  const item = oneLine(v.item, 100);
+  const note = oneLine(v.note, 240);
+  return {
+    by: v.by,
+    ...(view ? { view } : {}),
+    ...(label ? { label } : {}),
+    ...(item ? { item } : {}),
+    ...(note ? { note } : {}),
+  };
+}
+
 /** At "answer only", stands in for each new step: `{steps}` so far, `final: true` at the end. */
 export const PRIVATE_PROGRESS_EVENT = 'private_progress';
 /** Appended by the relay when the owner hides a finished run's details: `{steps}`. */

@@ -16,7 +16,14 @@ export interface RealSpaceInput {
   unread: number;
   status: RigSpaceStatus | undefined;
   /** `live`: the chat is running in this window right now (working, or waiting on the person). */
-  chats: readonly { id: string; title: string | null; updatedAt: number; live?: 'running' | 'needs_you' }[];
+  /** `unseen`: it finished with an answer the person has not looked at yet. */
+  chats: readonly {
+    id: string;
+    title: string | null;
+    updatedAt: number;
+    live?: 'running' | 'needs_you';
+    unseen?: boolean;
+  }[];
 }
 
 const ACTIVITY_WORD: Record<string, string> = {
@@ -131,6 +138,20 @@ export function chatToSession(
       origin: 'real',
     };
   }
+  // Finished, with an answer the person has not opened: it waits here until they do.
+  if (chat.unseen) {
+    return {
+      id: `chat:${chat.id}`,
+      spaceId,
+      name,
+      state: 'done',
+      short: `Done ${ago}`,
+      summary: 'Your agent finished. Open it to read the answer.',
+      last: { who: 'You', text: `Done ${ago}`, ago: ago.replace(/ ago$/, '') },
+      steps: [{ text: `Done ${ago}`, ago: ago.replace(/ ago$/, '') }],
+      origin: 'real',
+    };
+  }
   return {
     id: `chat:${chat.id}`,
     spaceId,
@@ -173,7 +194,13 @@ export function realSpaceToRail(
     ...live.map((r) => Date.parse(r.startedAt) || 0),
     ...input.chats.map((c) => (c.live ? now : c.updatedAt)),
   ].filter((t) => t > 0);
-  const chats = recent.slice(0, CHATS_PER_SPACE).map((c) => chatToSession(input.bindingId, c, now));
+  // Under the space in the sidebar: only chats with something going on (working, waiting on the
+  // person, or finished and not yet read). One that is done and read leaves; the space's own page
+  // and its "Your sessions" list still have it.
+  const chats = recent
+    .filter((c) => c.live || c.unseen)
+    .slice(0, CHATS_PER_SPACE)
+    .map((c) => chatToSession(input.bindingId, c, now));
   const history = recent.slice(0, CHATS_ON_SPACE_PAGE).map((c) => chatToSession(input.bindingId, c, now));
   const shared = input.members ? others.length > 0 : true;
   return {

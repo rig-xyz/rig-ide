@@ -4,6 +4,7 @@ import { parseFrontmatter } from '@emdash/core/skills';
 import { err, ok, type Result } from '@emdash/shared';
 import * as toml from 'smol-toml';
 import { z } from 'zod';
+import { newGroupId, type HomeLayout, type HomeLayoutAction } from '@shared/rig/home-layout';
 import { secretReason, syncIgnoreMatcher } from '../attachments/rules';
 import { CONNECTORS, connectorById, isConnectorId, RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import { opensBesideChat } from '@shared/spaces/links';
@@ -96,7 +97,13 @@ export function rigToolOf(title: string): string | null {
 }
 
 /** The browser tools (`pages/browser-tools.ts`) only read a page as the owner: no clicks, no typing. */
-export const PRE_APPROVED_BROWSER_TOOLS: ReadonlySet<string> = new Set(['rig_browser_pins', 'rig_browser_read', 'rig_browser_screenshot']);
+export const PRE_APPROVED_BROWSER_TOOLS: ReadonlySet<string> = new Set([
+  'rig_browser_pins',
+  'rig_browser_read',
+  'rig_browser_screenshot',
+  // Draws one of the space's own views off screen for the agent to look at (views/view-look.ts): the space's own files, nothing leaves.
+  'rig_view_look',
+]);
 
 /**
  * The read-only half of the owner's claude.ai Claude Docs connector: reading a
@@ -204,7 +211,10 @@ export function readerScope(ownerUserId: string, cwd: string): RigToolScope {
 }
 
 /** The Feed's tools a space session gets (`orchestratorTools`): listed only with Rig Alpha on. */
-export const FEED_RIG_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_act', 'rig_start']);
+/** Home's tool for arranging the person's list of spaces; only Home's session is given it. */
+export const NAV_TOOL = 'rig_nav';
+
+export const FEED_RIG_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_act', 'rig_start', NAV_TOOL]);
 
 export interface RigToolsBackend {
   /** The signed-in account's relay user id. */
@@ -277,6 +287,12 @@ export interface RigToolsBackend {
   listTopics?(bindingId: string): Promise<Result<{ enabled: boolean; topics: { id: string; name: string }[] } | null, Failure>>;
   /** Whether the person signed in here sees topics: their Topics setting, which shows the topic dock above the chat. */
   topicsOnHere?(): boolean;
+  /** Home's left-hand list of spaces: the person's groups, and their spaces with where each lives on this Mac. Absent when this version has none. */
+  homeNav?: {
+    layout(): Promise<HomeLayout>;
+    apply(action: HomeLayoutAction): Promise<HomeLayout>;
+    spaces(): Promise<Result<{ bindingId: string; name: string; root: string | null }[], Failure>>;
+  };
   /** The control plane's four primitives (orch/actions.ts); absent when this version has none. */
   orch?: OrchPrimitives;
   /** Rig Alpha (Settings › Advanced): with it off, space sessions get none of the Feed's tools. Omitted: on. */
@@ -1498,6 +1514,97 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
             : `${r.ref}: ${r.ok ? 'done' : 'not done'}. ${r.message}${r.changeId ? ` Undo with ${r.changeId}.` : ''}`
         );
         return { text: lines.join('\n') || 'Nothing to do.', ...(res.data.length && res.data.every((r) => !r.ok) ? { isError: true } : {}) };
+      },
+    },
+    {
+      name: NAV_TOOL,
+      description:
+        "List or change how your owner's spaces are grouped in Home's left-hand list, and rename a space. Use it when they ask to see, group, move, sort out or rename their spaces. action: list (the groups and which spaces are in each); create_group (name, optional spaces); rename_group (group, name); delete_group (group; its spaces go back to Ungrouped); move (spaces, group; leave group out to ungroup them); rename_space (spaces: one ref, name). " +
+        'A group is named by its current name; a space by its ref from rig_query spaces (space_…). Groups are only how their own list is arranged: nobody else sees them. Renaming a space shows for everyone in it, so do it only when they asked for that name.',
+      inputSchema: {
+        action: z.enum(['list', 'create_group', 'rename_group', 'delete_group', 'move', 'rename_space']),
+        group: z.string().optional().describe("A group's current name."),
+        name: z.string().optional().describe('The new name (of a group, or of a space).'),
+        spaces: z.array(z.string()).optional().describe('Space refs (space_…) from rig_query spaces.'),
+      },
+      annotations: { title: 'Arrange your spaces', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        const nav = backend.homeNav;
+        if (!nav) return failed("This version of Rig can't arrange the list of spaces.");
+        if (scope.bindingId !== HOME_BINDING) return failed('Only Rig in Home arranges the list of spaces.');
+        const all = await nav.spaces();
+        if (!all.success) return failed(`Couldn't read your owner's spaces: ${all.error.message}`);
+        const nameOf = (bindingId: string) => {
+          const space = all.data.find((s) => s.bindingId === bindingId);
+          return space ? `#${space.name}` : bindingId;
+        };
+        const layout = await nav.layout();
+        const describe = (now: HomeLayout) => {
+          const grouped = new Set(now.groups.flatMap((g) => g.spaces));
+          const lines = now.groups.map((g) => `${g.name}: ${g.spaces.map(nameOf).join(', ') || '(empty)'}`);
+          const loose = all.data.filter((s) => !grouped.has(s.bindingId)).map((s) => `#${s.name}`);
+          return [...lines, `Ungrouped: ${loose.join(', ') || '(none)'}`].join('\n');
+        };
+        const action = String(input.action ?? '');
+        if (action === 'list') return { text: describe(layout) };
+
+        const clean = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
+        const findGroup = (name: string) => {
+          const wanted = name.toLowerCase();
+          const hits = layout.groups.filter((g) => g.name.trim().toLowerCase() === wanted);
+          return hits.length === 1 ? hits[0]! : null;
+        };
+        const refs = Array.isArray(input.spaces) ? input.spaces.map((x) => String(x).trim()).filter(Boolean) : [];
+        const ids: string[] = [];
+        for (const ref of refs) {
+          const id = ref.replace(/^space_/, '');
+          if (!all.data.some((s) => s.bindingId === id)) return failed(`${ref} isn't one of your owner's spaces. List them with rig_query spaces.`);
+          ids.push(id);
+        }
+        const groupName = clean(input.group);
+        const name = clean(input.name);
+
+        if (action === 'create_group') {
+          if (!name) return failed('The group needs a name.');
+          if (findGroup(name)) return failed(`There is already a group called "${name}".`);
+          const after = await nav.apply({ type: 'createGroup', id: newGroupId(), name, ...(ids.length ? { spaces: ids } : {}) });
+          return { text: `Made the group "${name}".\n${describe(after)}` };
+        }
+        if (action === 'rename_group' || action === 'delete_group') {
+          const group = findGroup(groupName);
+          if (!group) return failed(`No single group is called "${groupName}". Use action list to see them.`);
+          if (action === 'delete_group') {
+            const after = await nav.apply({ type: 'deleteGroup', id: group.id });
+            return { text: `Removed the group "${group.name}"; its spaces are ungrouped.\n${describe(after)}` };
+          }
+          if (!name) return failed('Give the new name.');
+          const after = await nav.apply({ type: 'renameGroup', id: group.id, name });
+          return { text: `Renamed the group "${group.name}" to "${name}".\n${describe(after)}` };
+        }
+        if (action === 'move') {
+          if (ids.length === 0) return failed('Say which spaces to move (refs from rig_query spaces).');
+          const group = groupName ? findGroup(groupName) : null;
+          if (groupName && !group) return failed(`No single group is called "${groupName}". Make it first with create_group, or use action list.`);
+          let after = layout;
+          for (const bindingId of ids) after = await nav.apply({ type: 'moveSpace', bindingId, groupId: group?.id ?? null });
+          return { text: `Moved ${ids.map(nameOf).join(', ')} to ${group ? `"${group.name}"` : 'Ungrouped'}.\n${describe(after)}` };
+        }
+        if (action === 'rename_space') {
+          if (ids.length !== 1) return failed('Rename one space at a time: give one ref in spaces.');
+          if (!name) return failed('The space needs a name.');
+          if (name.length > SPACE_NAME_MAX) return failed(`That name is ${name.length} characters; keep it to ${SPACE_NAME_MAX} or fewer.`);
+          const space = all.data.find((s) => s.bindingId === ids[0])!;
+          if (!space.root) return failed(`#${space.name} isn't on this Mac, so it can't be renamed from here.`);
+          // Renaming edits the space's shared rig.toml, so it takes edit rights: a viewer can't.
+          const members = await backend.listMembers(space.bindingId);
+          if (!members.success) return failed(`Couldn't check your owner's role in #${space.name}, so it wasn't renamed: ${members.error.message}`);
+          const role = members.data.find((m) => m.userId === scope.ownerUserId)?.role;
+          if (!role || role === 'viewer') return failed(`Your owner can't rename #${space.name}: only its owners and editors can.`);
+          const renamed = await backend.renameSpace(space.bindingId, space.root, name);
+          if (!renamed.success) return failed(`Couldn't rename the space: ${renamed.error.message}`);
+          return { text: `Renamed #${space.name} to "${renamed.data.name}". Everyone in it will see the new name.` };
+        }
+        return failed('Unknown action. Use list, create_group, rename_group, delete_group, move or rename_space.');
       },
     },
     {

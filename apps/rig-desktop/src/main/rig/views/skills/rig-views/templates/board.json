@@ -1,0 +1,25 @@
+{
+  "source": "Linear · Acme app",
+  "title": "Bug bash 2.3.0",
+  "tab": { "sub": "9 in progress · 2 PRs for you", "count": 2 },
+  "read_at": "2026-11-12T16:10:00Z",
+  "rig": { "summary": "Three new reports since this morning; two were already on the board and I linked them. APP-570 has a fix in #371 that waits on your review." },
+  "columns": [
+    { "id": "backlog", "name": "Backlog" },
+    { "id": "progress", "name": "In progress" },
+    { "id": "done", "name": "Done" }
+  ],
+  "issues": [
+    { "id": "APP-605", "url": "https://example.com/APP-605", "column": "backlog", "env": "prod", "priority": "High", "owner": null, "title": "Week view shows no events with 12 on the server; Month view spins forever", "rig_tag": { "text": "Sync", "tone": "violet" } },
+    { "id": "APP-575", "url": "https://example.com/APP-575", "column": "backlog", "env": "prod", "priority": "Medium", "owner": "Sam", "owner_id": "usr_sam", "title": "Event count jumps for about 15 s after tapping Sync now", "rig_tag": { "text": "Sync", "tone": "violet" } },
+    { "id": "APP-616", "url": "https://example.com/APP-616", "column": "backlog", "env": "stg", "priority": "Medium", "owner": null, "title": "Inbox shows a declined invite until the server confirms (about 8 min)", "rig_tag": { "text": "Sync", "tone": "violet" } },
+    { "id": "APP-620", "url": "https://example.com/APP-620", "column": "backlog", "env": "prod", "priority": "Medium", "owner": null, "title": "Event card in chat and event detail show different start times", "rig_tag": { "text": "from Slack · 10:40", "tone": "accent" } },
+    { "id": "APP-617", "url": "https://example.com/APP-617", "column": "backlog", "env": "stg", "priority": "Low", "owner": null, "title": "Chart axis labels overlap on small phones" },
+    { "id": "APP-570", "url": "https://example.com/APP-570", "column": "progress", "env": "prod", "priority": "High", "owner": "Sam", "owner_id": "usr_sam", "title": "Booking and rescheduling ignore rooms held in Drafts", "rig_tag": { "text": "#371 approved · ready", "tone": "ok" } },
+    { "id": "APP-598", "url": "https://example.com/APP-598", "column": "progress", "env": "prod", "priority": "High", "owner": "Noor", "owner_id": "usr_riyad", "title": "Calendar invite shows pending, then disappears", "rig_tag": { "text": "#370 · needs a review", "tone": "accent" } },
+    { "id": "APP-615", "url": "https://example.com/APP-615", "column": "progress", "env": "prod", "priority": null, "owner": "Dylan", "owner_id": "usr_abc123", "title": "“Split the hour 40/20” shows one block instead of two", "rig_tag": { "text": "backend#395 · yours", "tone": "accent" } },
+    { "id": "APP-418", "url": "https://example.com/APP-418", "column": "progress", "env": "prod", "priority": "Urgent", "owner": "Dylan", "owner_id": "usr_abc123", "title": "Cancelled events never leave the cached count", "rig_tag": { "text": "Sync", "tone": "violet" } },
+    { "id": "APP-573", "url": "https://example.com/APP-573", "column": "progress", "env": "stg", "priority": "Medium", "owner": "Lena", "owner_id": "usr_illan", "title": "Reschedules use a time from a stale draft" },
+    { "id": "APP-580", "url": "https://example.com/APP-580", "column": "done", "env": "prod", "priority": "Medium", "owner": "Dylan", "owner_id": "usr_abc123", "title": "Assistant suggests the wrong rooms and searches the web for a clear ask", "rig_tag": { "text": "Done 30 Oct", "tone": "ok" } }
+  ]
+}

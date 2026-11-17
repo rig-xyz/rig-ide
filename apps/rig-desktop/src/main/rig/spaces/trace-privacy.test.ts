@@ -254,6 +254,52 @@ describe('RoomSeesFilter at Steps', () => {
     ]);
   });
 
+  it("sends a command's own description with it, and nothing else of its input", () => {
+    const filter = new RoomSeesFilter('steps', '/rigs/one');
+    const [sent] = filter.filter('tool_call_update', {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'd1',
+      kind: 'execute',
+      title: 'grep -ril secret ~/notes',
+      rawInput: { command: 'grep -ril secret ~/notes', description: "  Search the views'\n files " },
+    });
+    expect(sent!.payload).toEqual({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'd1',
+      kind: 'execute',
+      title: 'Ran a command',
+      rawInput: { description: "Search the views' files" },
+    });
+    expect(JSON.stringify(sent)).not.toContain('grep');
+  });
+
+  it('never sends a description for a connector step, or at the Answer level', () => {
+    const steps = new RoomSeesFilter('steps', '/rigs/one');
+    const [connector] = steps.filter('tool_call', {
+      sessionUpdate: 'tool_call',
+      toolCallId: 'm1',
+      kind: 'other',
+      title: 'mcp__granola__search',
+      rawInput: { description: 'Find the pricing meeting' },
+    });
+    expect(JSON.stringify(connector)).not.toContain('pricing');
+    const answer = new RoomSeesFilter('answer', '/rigs/one');
+    const sent = answer.filter('tool_call', {
+      sessionUpdate: 'tool_call',
+      toolCallId: 'a1',
+      kind: 'execute',
+      rawInput: { command: 'ls', description: 'List files' },
+    });
+    expect(JSON.stringify(sent)).not.toContain('List files');
+  });
+
+  it('lets what started the run through at every level', () => {
+    const trigger = { by: 'view', view: 'drafts', label: 'Approve', item: 'A post' };
+    for (const level of ['steps', 'answer'] as const) {
+      expect(new RoomSeesFilter(level, '/rigs/one').filter('run_trigger', trigger)).toEqual([{ kind: 'run_trigger', payload: trigger }]);
+    }
+  });
+
   it('marks a file read outside the space private, with no path', () => {
     expect(byId(out, 'r1')).toEqual([
       { sessionUpdate: 'tool_call', toolCallId: 'r1', kind: 'read', status: 'completed', title: 'Read a file', private: true },
@@ -436,10 +482,20 @@ describe('RoomSeesFilter over the recorded runs', () => {
       // The folder these runs ran in, as the edits' paths report it.
       const root = '/Users/dtsbourg/Code/tap-spike-sessions/.spike/runs/' + file.replace(/\.json$/, '');
       const secrets = privateStrings(events);
+      // A command's own one-line description is the one piece of its input that goes up at Steps.
+      const descriptions = new Set(
+        events.flatMap((e) => {
+          const input = e.payload.rawInput as { description?: unknown } | undefined;
+          return typeof input?.description === 'string' ? [input.description] : [];
+        })
+      );
       for (const level of ['steps', 'answer'] as const) {
         const filter = new RoomSeesFilter(level, root);
         const out = JSON.stringify(events.flatMap((e) => filter.filter(e.kind, e.payload)));
-        for (const secret of secrets) expect(out, `${level}: ${secret.slice(0, 60)}`).not.toContain(secret);
+        for (const secret of secrets) {
+          if (level === 'steps' && descriptions.has(secret)) continue;
+          expect(out, `${level}: ${secret.slice(0, 60)}`).not.toContain(secret);
+        }
         expect(out).not.toContain('/Users/dtsbourg');
       }
     });

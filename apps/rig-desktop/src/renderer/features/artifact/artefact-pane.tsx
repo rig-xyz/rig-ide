@@ -1,9 +1,10 @@
-import { FolderTree, Globe, Plus, Rows3, X } from 'lucide-react';
+import { FolderTree, Globe, LayoutDashboard, Plus, Rows3, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { SessionPane } from '@renderer/features/chat/chat-panel';
 import { SessionTabLabel } from '@renderer/features/chat/session/session-tab-label';
 import { PageView } from '@renderer/features/pages/page-view';
 import { BrandLogo } from '@renderer/features/spaces/logos';
+import { RigViewHost } from '@renderer/features/views/rig-view-host';
 import { iconFor } from '@renderer/features/workspace/file-tree';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
@@ -40,6 +41,7 @@ export function ArtefactPane({
   onOpenFile,
   onOpenFocus,
   onPageTitle,
+  railed = false,
 }: {
   root: string;
   rootId: string;
@@ -53,6 +55,8 @@ export function ArtefactPane({
   onOpenFocus: () => void;
   /** A page tab's page loaded with this title. */
   onPageTitle?: (url: string, title: string) => void;
+  /** The space's tabs rail lists the tabs (`features/views/space-tabs-rail.tsx`): this strip keeps only its controls. */
+  railed?: boolean;
 }) {
   const plusRef = useRef<HTMLButtonElement>(null);
   const filesRef = useRef<HTMLButtonElement>(null);
@@ -96,7 +100,7 @@ export function ArtefactPane({
             aria-haspopup="menu"
             aria-expanded={plusOpen}
             aria-label="New tab"
-            className="hover:bg-bg-2 hover:text-text-primary flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors"
+            className="flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary"
           >
             <Plus className="size-3.5" strokeWidth={1.5} />
           </button>
@@ -108,7 +112,15 @@ export function ArtefactPane({
 
   return (
     <div className="pane-in flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-      <div className="border-border-hairline flex h-10 shrink-0 items-center border-b">
+      {/* With the tabs rail, a view needs no strip at all: its tab is in the rail, and it opens no files. */}
+      <div
+        className={cn(
+          'border-border-hairline flex h-10 shrink-0 items-center',
+          // The rail carries the tabs, so the strip is only tools: no rule of its own above the file's header.
+          !railed && 'border-b',
+          railed && active?.kind === 'view' && 'hidden'
+        )}
+      >
         <div
           ref={tablistRef}
           role="tablist"
@@ -124,9 +136,12 @@ export function ArtefactPane({
             const buttons = tablistRef.current?.querySelectorAll<HTMLElement>('[data-pane-tab]');
             buttons?.[next]?.focus();
           }}
-          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 py-1.5 [mask-image:linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)]"
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [mask-image:linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)] px-2 py-1.5"
         >
           {state.tabs.map((tab, index) => {
+            // With the tabs rail, views and sessions are pages of their own, listed there: this strip keeps the
+            // files and web pages opened beside the Room.
+            if (railed && (tab.kind === 'view' || tab.kind === 'session')) return null;
             if (tab.kind === 'session') {
               return (
                 <PaneTab
@@ -144,6 +159,27 @@ export function ArtefactPane({
                   onDragEnd={() => setDragIndex(null)}
                 >
                   <SessionTabLabel sessionId={tab.sessionId} />
+                </PaneTab>
+              );
+            }
+            if (tab.kind === 'view') {
+              return (
+                <PaneTab
+                  key={`view:${tab.name}`}
+                  active={index === state.active}
+                  dragging={dragIndex === index}
+                  onSelect={() => onActivateTab(index)}
+                  onClose={() => onCloseTab(index)}
+                  onDragStart={() => setDragIndex(index)}
+                  onDragOverTab={() => {
+                    if (dragIndex === null || dragIndex === index) return;
+                    onMoveTab(dragIndex, index);
+                    setDragIndex(index);
+                  }}
+                  onDragEnd={() => setDragIndex(null)}
+                >
+                  <LayoutDashboard className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
+                  <span className="max-w-40 truncate">{tab.name}</span>
                 </PaneTab>
               );
             }
@@ -209,10 +245,16 @@ export function ArtefactPane({
               </PaneTab>
             );
           })}
-          {!overflowing && plusButton}
+          {!overflowing && !railed && plusButton}
         </div>
-        <div className="border-border-hairline flex shrink-0 items-center gap-0.5 border-l px-1.5">
-          {overflowing && plusButton}
+        <div
+          className={cn(
+            'border-border-hairline flex shrink-0 items-center gap-0.5 px-1.5',
+            // The rail names the tab, so the strip is only the tools, flush right.
+            railed ? 'px-2.5' : 'border-l'
+          )}
+        >
+          {(overflowing || railed) && plusButton}
           {/* Feedback round 5: the navigator's door lives at TAB level, not
               on each file's header — it opens files, so it belongs with the
               tabs they open into, and the focus tab gets it for free. */}
@@ -230,7 +272,7 @@ export function ArtefactPane({
                   aria-haspopup="dialog"
                   aria-expanded={navigator === 'files'}
                   aria-label="Files"
-                  className="hover:bg-bg-2 hover:text-text-primary flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors"
+                  className="flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary"
                 >
                   <FolderTree className="size-3.5" strokeWidth={1.5} />
                 </button>
@@ -264,6 +306,8 @@ export function ArtefactPane({
             sessionId={active.sessionId}
             onOpenFile={(absPath) => onOpenFile(absPath, absPath)}
           />
+        ) : active.kind === 'view' ? (
+          <RigViewHost key={active.name} rootId={rootId} bindingId={bindingId} name={active.name} />
         ) : active.kind === 'page' ? (
           <PageView
             key={active.url}
@@ -376,7 +420,7 @@ function PaneTab({
         onClick={onClose}
         aria-label="Close tab"
         title="Close tab"
-        className="shrink-0 text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-text-primary focus-visible:opacity-100 group-focus-within:opacity-100"
+        className="shrink-0 text-text-muted opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 hover:text-text-primary focus-visible:opacity-100"
       >
         <X className="size-3" strokeWidth={1.5} />
       </button>

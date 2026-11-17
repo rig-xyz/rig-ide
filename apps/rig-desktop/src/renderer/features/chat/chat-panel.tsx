@@ -1,3 +1,4 @@
+import { useAlphaEnabled } from '@renderer/features/home-feed/use-new-home-enabled';
 import { tailMode } from '@emdash/chat-ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -15,11 +16,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { rigFilesQueryKey } from '@renderer/features/workspace/file-tree';
 import type { ChatCommands, ChatView } from '@renderer/lib/chat/chat-transcript';
 import { ChatTranscript } from '@renderer/lib/chat/chat-transcript';
+import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
 import { events } from '@renderer/lib/ipc';
 import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Button } from '@renderer/lib/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { sendToSideChat } from './session/side-chat';
+import { lastAnswer } from '@renderer/features/home-feed/session-result';
+import { roomTextMessage } from '@renderer/features/spaces/room-send';
 import { cn } from '@renderer/lib/utils';
 import type { RigFileNode } from '@shared/rig/files';
 import type { RigStoredSession } from '@shared/rig/sessions';
@@ -1814,10 +1819,11 @@ export const SessionPane = observer(function SessionPane({
           skills={[]}
           placeholder="Message this session…"
           onSend={(text) => {
-            if (store?.kind === 'live') store.submitPrompt(text);
+            // (A side chat's first message takes the Room's recent conversation with it.)
+            if (store?.kind === 'live') void sendToSideChat(store, text);
             else if (store?.kind === 'replay') resume(store, text);
           }}
-          footer={<SessionComposerFooter store={store} />}
+          footer={<SessionComposerFooter store={store} bindingId={bindingId} />}
         />
       </div>
     </div>
@@ -1825,13 +1831,54 @@ export const SessionPane = observer(function SessionPane({
 });
 
 /** Under a session's composer: that it's yours alone, and its permission mode. */
-const SessionComposerFooter = observer(function SessionComposerFooter({ store }: { store: RigSession | null }) {
+const SessionComposerFooter = observer(function SessionComposerFooter({
+  store,
+  bindingId,
+}: {
+  store: RigSession | null;
+  bindingId: string;
+}) {
   const live = store?.kind === 'live' ? store : null;
+  // The session's last answer can go to the Room as a message from the person: the one way
+  // anything said here reaches the others.
+  const answer = store ? lastAnswer(store.turns) : null;
+  const working = live?.affordances.isWorking ?? false;
+  const [posting, setPosting] = useState<'idle' | 'busy' | 'done'>('idle');
+  useEffect(() => setPosting('idle'), [answer]);
+  // Posting a session's answer to the Room comes with side chats: Rig Alpha.
+  const alpha = useAlphaEnabled();
+  const post = () => {
+    if (!answer || posting !== 'idle') return;
+    setPosting('busy');
+    void rpc.rig.spacesConnection
+      .postMessage({ bindingId, ...roomTextMessage(answer) })
+      .then((result) => {
+        if (!result.success) throw new Error('not posted');
+        setPosting('done');
+        toast({ title: 'Posted to the Room', description: 'Everyone in the space can see it now.' });
+      })
+      .catch(() => {
+        setPosting('idle');
+        toast({ title: 'Couldn’t post to the Room', description: 'Try again in a moment.' });
+      });
+  };
   return (
     <div className="flex items-center gap-2 px-1 pt-1.5 text-xs text-text-muted" data-testid="session-composer-footer">
       <span className="min-w-0 flex-1 truncate">
         {store?.kind === 'replay' ? 'Only you see this session. Sending picks it back up.' : 'Only you see this session.'}
       </span>
+      {alpha && answer && !working && (
+        <button
+          type="button"
+          onClick={post}
+          disabled={posting !== 'idle'}
+          data-testid="session-post-to-room"
+          title="Posts this session's last answer in the Room, as a message from you"
+          className="shrink-0 rounded-control px-1.5 py-0.5 text-xs text-text-secondary transition-[color,background-color,transform] duration-150 ease-out outline-none hover:bg-bg-2 hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-[0.97] disabled:pointer-events-none disabled:text-text-muted"
+        >
+          {posting === 'done' ? 'Posted to the Room' : posting === 'busy' ? 'Posting…' : 'Post answer to the Room'}
+        </button>
+      )}
       {live && live.permissionModeOptions.length > 0 && (
         <PermissionModePicker
           options={live.permissionModeOptions}

@@ -1,0 +1,27 @@
+{
+  "source": "Slack · #bug-bash · #support",
+  "tab": { "sub": "1 opened · 2 linked", "count": 0 },
+  "read_at": "2026-11-12T16:10:00Z",
+  "since": "2026-11-12T09:00:00Z",
+  "rig": { "summary": "Six threads since 09:00. Two were reports we already track, so I linked them. One is new (APP-620), one went into the Sync hypothesis, and I answered a question about the test build." },
+  "threads": [
+    { "id": "t1", "channel": "#support", "links": [ { "label": "#support", "url": "https://example.com/slack/t1" }, { "label": "Ana Ruiz", "url": "https://example.com/people/ana" }, { "label": "Northwind", "url": "https://example.com/northwind" } ], "at": "2026-11-12T11:18:00Z", "replies": 6,
+      "text": "A user can't book a room (“no rooms free”) while two sit in Drafts.",
+      "did": { "kind": "linked", "label": "+1 report", "result": "APP-570 · fix ready in app#371" } },
+    { "id": "t2", "channel": "#bug-bash", "url": "https://example.com/slack/t2", "at": "2026-11-12T11:05:00Z", "replies": 3,
+      "text": "The event count still shows the old value a few seconds after cancelling.",
+      "did": { "kind": "hypothesis", "label": "Hypothesis", "result": "APP-575 · added to “Sync”" } },
+    { "id": "t3", "channel": "#bug-bash", "url": "https://example.com/slack/t3", "at": "2026-11-12T10:52:00Z", "replies": 4,
+      "text": "A calendar invite sat on pending, then disappeared. The guest was not told.",
+      "did": { "kind": "linked", "label": "+1 report", "result": "APP-598 · fix in app#370" } },
+    { "id": "t4", "channel": "#bug-bash", "url": "https://example.com/slack/t4", "at": "2026-11-12T10:40:00Z", "replies": 2,
+      "text": "Event card in chat says 10:00 and the detail page says 10:30.",
+      "did": { "kind": "opened", "label": "New issue", "result": "APP-620 · Backlog, prod, Medium" } },
+    { "id": "t5", "channel": "#bug-bash", "url": "https://example.com/slack/t5", "at": "2026-11-12T10:22:00Z", "replies": 1,
+      "text": "Is 2.3.0 build 2 out to testers yet?",
+      "did": { "kind": "answered", "label": "Answered", "result": "Yes, since 09:10. Linked the build in the thread." } },
+    { "id": "t6", "channel": "#support", "at": "2026-11-12T10:03:00Z", "replies": 0,
+      "text": "Feature request: dark mode for charts.",
+      "did": { "kind": "skipped", "label": "Skipped", "result": "Not a bug bash item. Left for product." } }
+  ]
+}

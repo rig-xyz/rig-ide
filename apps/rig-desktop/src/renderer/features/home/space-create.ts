@@ -1,3 +1,5 @@
+import { ADJECTIVES, NOUNS } from '@shared/rig/space-names';
+
 /**
  * Polish round 2, lane F — the one-click "New space" flow (Google-Meet
  * style: one click, land straight in the Room). The actual creation goes
@@ -12,44 +14,6 @@
  * profanity list to maintain): the collision retry below is what actually
  * guarantees uniqueness, not the list's size.
  */
-
-const ADJECTIVES = [
-  'bright',
-  'calm',
-  'quiet',
-  'swift',
-  'steady',
-  'clear',
-  'bold',
-  'golden',
-  'quick',
-  'gentle',
-  'sunny',
-  'crisp',
-  'lively',
-  'warm',
-  'open',
-  'fresh',
-] as const;
-
-const NOUNS = [
-  'harbor',
-  'summit',
-  'meadow',
-  'river',
-  'canyon',
-  'orbit',
-  'compass',
-  'beacon',
-  'garden',
-  'valley',
-  'horizon',
-  'island',
-  'trail',
-  'grove',
-  'coast',
-  'ridge',
-] as const;
 
 /** How many random word pairs to try before falling back to a numbered suffix — generous headroom over the 16×16 = 256 combinations above. */
 const MAX_ATTEMPTS = 30;

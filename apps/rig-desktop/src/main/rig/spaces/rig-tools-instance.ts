@@ -1,5 +1,9 @@
 import { readFile, stat } from 'node:fs/promises';
 import { err, ok, type Result } from '@emdash/shared';
+import { rigAccountController } from '../account';
+import { VIEW_LOOK_TOOL, viewLookTool } from '../views/view-look';
+import { homeLayoutSync } from '../home-layout';
+import { resolveLocalPathsImpl } from '../recent-rigs';
 import { events } from '@main/lib/events';
 import type { RigFileNode } from '@shared/rig/files';
 import { spacesAgentConfigChangedChannel } from '@shared/spaces/agent-settings';
@@ -165,6 +169,17 @@ const backend: RigToolsBackend = {
   topicsOnHere: () => rigSettingsStore.get().roomThemesEnabled === true,
   alphaOn: () => rigSettingsStore.get().alphaEnabled,
   // The control plane; imported lazily, since it reaches the dispatcher, which imports this module.
+  homeNav: {
+    layout: () => homeLayoutSync.get(),
+    apply: (action) => homeLayoutSync.apply(action),
+    spaces: async () => {
+      const ws = await rigAccountController.workspaces();
+      if (!ws.success) return ws;
+      const spaces = ws.data.filter((b) => b.kind === 'space');
+      const roots = await resolveLocalPathsImpl(spaces.map((b) => b.id)).catch(() => ({}) as Record<string, string>);
+      return ok(spaces.map((b) => ({ bindingId: b.id, name: b.name, root: roots[b.id] ?? null })));
+    },
+  },
   orch: {
     query: async (input) => (await import('../orch/instance')).orchActions.query(input),
     get: async (ref) => (await import('../orch/instance')).orchActions.get(ref),
@@ -185,4 +200,9 @@ const backend: RigToolsBackend = {
   },
 };
 
-export const rigToolsServer = createRigToolsServer({ backend, extraTools: browserRigTools(api) });
+export const rigToolsServer = createRigToolsServer({
+  backend,
+  extraTools: [...browserRigTools(api), viewLookTool()],
+  // Looking at a view is for spaces that have views: Rig Alpha.
+  alphaOnly: new Set([VIEW_LOOK_TOOL]),
+});

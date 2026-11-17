@@ -39,6 +39,13 @@ export const RIG_START_TOOL = `mcp__${RIG_TOOLS_SERVER}__rig_start`;
 /** The built-in tools a locked session may use: reading files, finding Rig's tools, its own todo list. */
 export const BUILT_IN_READS = ['Read', 'Glob', 'Grep', 'LS', 'ToolSearch', 'TodoWrite', 'ListMcpResourcesTool', 'ReadMcpResourceTool'];
 
+/**
+ * Claude's own tool for using one of the person's skills. A skill is their own instructions; what
+ * it can then do is still only what the session may do. Given to Home and the orchestrator, not
+ * to the short reading runs.
+ */
+export const SKILL_TOOL = 'Skill';
+
 /** A Rig tool by its full name, as the guard sees it. */
 export const rigTool = (name: string) => `mcp__${RIG_TOOLS_SERVER}__${name}`;
 

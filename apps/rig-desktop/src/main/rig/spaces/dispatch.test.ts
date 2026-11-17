@@ -313,7 +313,7 @@ describe('createSpacesDispatcher', () => {
     const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
 
     const result = await dispatch(makeRequest());
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
 
     expect(postedMessages).toEqual([
       expect.objectContaining({ bindingId: makeRequest().bindingId, kind: 'session', meta: { runId: result.runId } }),
@@ -331,7 +331,7 @@ describe('createSpacesDispatcher', () => {
     const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
 
     const result = await dispatch(makeRequest({ sourceMessageId: 'msg-ask' }));
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
 
     expect(postedMessages.filter((m) => m.kind === 'session')).toEqual([
       expect.objectContaining({ meta: { runId: result.runId, sourceMessageId: 'msg-ask' } }),
@@ -354,7 +354,7 @@ describe('createSpacesDispatcher', () => {
     const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
 
     const result = await dispatch(makeRequest({ sourceMessageId: 'msg-ask' }));
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
 
     expect(attempts).toEqual([
       { runId: result.runId, sourceMessageId: 'msg-ask' },
@@ -373,7 +373,7 @@ describe('createSpacesDispatcher', () => {
     const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
 
     const result = await dispatch(makeRequest());
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     reject?.('prompt_failed');
 
     await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: makeRequest().id, status: 'failed' }]));
@@ -392,7 +392,7 @@ describe('createSpacesDispatcher', () => {
     const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
 
     const result = await dispatch(makeRequest());
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     rejects[0]!('invalid_state');
     await vi.waitFor(() => expect(fake.acp.waitUntilReady).toHaveBeenCalledTimes(1));
     // Not sent again until the session is ready; the run isn't failed meanwhile.
@@ -471,7 +471,7 @@ describe('createSpacesDispatcher', () => {
     });
 
     const result = await dispatch(makeRequest());
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
     const turnId = fake.queued[0].turnId;
 
@@ -491,7 +491,7 @@ describe('createSpacesDispatcher', () => {
     const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
 
     const result = await dispatch(makeRequest());
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
     const { turnId, text, hiddenContext } = fake.queued[0];
 
@@ -520,7 +520,7 @@ describe('createSpacesDispatcher', () => {
     });
 
     const result = await dispatch(makeRequest({ id: 'req1' }));
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
     const turnId = fake.queued[0].turnId;
     fake.emitTurnStart(conversationId, turnId);
@@ -540,7 +540,7 @@ describe('createSpacesDispatcher', () => {
     });
 
     const result = await dispatch(makeRequest({ id: 'req1' }));
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
     const turnId = fake.queued[0].turnId;
     fake.emitTurnStart(conversationId, turnId);
@@ -561,7 +561,7 @@ describe('createSpacesDispatcher', () => {
 
     const a = await dispatch(makeRequest({ id: 'reqA' }));
     const b = await dispatch(makeRequest({ id: 'reqB' }));
-    if ('failed' in a || 'failed' in b) throw new Error('expected success');
+    if (!('runId' in a) || !('runId' in b)) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
     const [turnA, turnB] = fake.queued.map((q) => q.turnId);
 
@@ -620,7 +620,7 @@ describe('createSpacesDispatcher', () => {
       // Only now does queuePrompt's own RPC ack arrive, carrying the SAME turnId.
       resolveQueue(ok({ turnId: 'server-turn-1' }));
       const result = await dispatchPromise;
-      if ('failed' in result) throw new Error('expected success');
+      if (!('runId' in result)) throw new Error('expected success');
 
       await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'done' }]));
       const events = postedEvents.find((p) => p.runId === result.runId);
@@ -643,7 +643,7 @@ describe('createSpacesDispatcher', () => {
       });
 
       const result = await dispatch(makeRequest({ id: 'req1' }));
-      if ('failed' in result) throw new Error('expected success');
+      if (!('runId' in result)) throw new Error('expected success');
       const conversationId = fake.started[0].conversationId;
       const turnId = fake.queued[0].turnId;
 
@@ -672,7 +672,7 @@ describe('createSpacesDispatcher', () => {
         resolveWorkspace: async () => '/rigs/one',
       });
       const result = await dispatcher.dispatch(makeRequest());
-      if ('failed' in result) throw new Error('expected success');
+      if (!('runId' in result)) throw new Error('expected success');
       const conversationId = fake.started[0].conversationId;
       const turnId = fake.queued[0].turnId;
       fake.emitTurnStart(conversationId, turnId);
@@ -757,7 +757,7 @@ describe('createSpacesDispatcher', () => {
         resolveWorkspace: async () => '/rigs/one',
       });
       const result = await dispatcher.dispatch(makeRequest());
-      if ('failed' in result) throw new Error('expected success');
+      if (!('runId' in result)) throw new Error('expected success');
       const conversationId = fake.started[0].conversationId;
 
       // No turn_start yet.
@@ -776,7 +776,7 @@ describe('createSpacesDispatcher', () => {
     });
 
     const result = await dispatch(makeRequest({ id: 'req1' }));
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
     const turnId = fake.queued[0].turnId;
     fake.emitTurnStart(conversationId, turnId);
@@ -803,7 +803,7 @@ describe('createSpacesDispatcher', () => {
 
     const a = await dispatch(makeRequest({ id: 'reqA' }));
     const b = await dispatch(makeRequest({ id: 'reqB' }));
-    if ('failed' in a || 'failed' in b) throw new Error('expected success');
+    if (!('runId' in a) || !('runId' in b)) throw new Error('expected success');
 
     const stopped = await stopRun(b.runId);
     expect(stopped).toBe(true);
@@ -911,7 +911,7 @@ describe('createSpacesDispatcher', () => {
       store: inFlightStore([{ runId: 'lost-run', bindingId: 'b1' }]),
     });
     const result = await dispatch(makeRequest({ id: 'req-live' }));
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
 
     expect(await settleIfNotLive(result.runId, 'b1')).toBe(false);
     expect(await settleIfNotLive('lost-run', 'b1')).toBe(true);
@@ -945,7 +945,7 @@ describe('createSpacesDispatcher', () => {
     const { dispatch, settleIfNotLive } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
 
     const result = await dispatch(makeRequest());
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
     const turnId = fake.queued[0].turnId;
     fake.emitTurnStart(conversationId, turnId);
@@ -968,7 +968,7 @@ describe('createSpacesDispatcher', () => {
     });
     const claude = await dispatch(makeRequest({ id: 'req-claude', targetAgent: 'claude' }));
     const codex = await dispatch(makeRequest({ id: 'req-codex', targetAgent: 'codex' }));
-    if ('failed' in claude || 'failed' in codex) throw new Error('expected success');
+    if (!('runId' in claude) || !('runId' in codex)) throw new Error('expected success');
     const [claudeConv, codexConv] = fake.started.map((s) => s.conversationId);
     fake.emitTurnStart(claudeConv!, fake.queued[0]!.turnId);
     fake.emitTurnStart(codexConv!, fake.queued[1]!.turnId);
@@ -1018,7 +1018,7 @@ describe('createSpacesDispatcher', () => {
       resolveWorkspace: async () => '/rigs/one',
     });
     const claude = await dispatch(makeRequest({ id: 'req-claude', targetAgent: 'claude' }));
-    if ('failed' in claude) throw new Error('expected success');
+    if (!('runId' in claude)) throw new Error('expected success');
     fake.emitTurnStart(fake.started[0]!.conversationId, fake.queued[0]!.turnId);
 
     expect(await stopRun(claude.runId, 'binding-1')).toBe(true);
@@ -1062,7 +1062,7 @@ describe('createSpacesDispatcher', () => {
 
     const a = await dispatch(makeRequest({ id: 'reqA' }));
     const b = await dispatch(makeRequest({ id: 'reqB' }));
-    if ('failed' in a || 'failed' in b) throw new Error('expected success');
+    if (!('runId' in a) || !('runId' in b)) throw new Error('expected success');
     const conversationId = fake.started[0]!.conversationId;
     fake.emitTurnStart(conversationId, 'tA');
 
@@ -1070,7 +1070,7 @@ describe('createSpacesDispatcher', () => {
     expect(await stopRun(b.runId)).toBe(true);
     await vi.waitFor(() => expect(patchedSessions).toEqual([{ runId: b.runId, status: 'stopped' }]));
     const c = await dispatch(makeRequest({ id: 'reqC', prompt: 'Continue where you left off.' }));
-    if ('failed' in c) throw new Error('expected success');
+    if (!('runId' in c)) throw new Error('expected success');
 
     fake.emitTurnEnd(conversationId, 'tA', 'end_turn');
     // The runtime starts B's prompt anyway: it's cancelled, and its work is nobody's.
@@ -1141,7 +1141,7 @@ describe('createSpacesDispatcher', () => {
       defaultConfig: (agent) => (agent === 'claude' ? { model: 'sonnet', mode: 'acceptEdits' } : {}),
     });
     const result = await dispatch(makeRequest({ id: 'req-defaults' }));
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     expect(applied).toEqual([{ model: 'sonnet', mode: 'acceptEdits' }]);
   });
 
@@ -2103,6 +2103,56 @@ describe('memory across restarts', () => {
     expect(store.get('binding-1::owner-1::claude')).toMatchObject({ conversationId: fresh, acpSessionId: 'acp-new' });
   });
 
+  it('startOver sets a stored session aside: the next turn starts a new conversation and never resumes the old one', async () => {
+    const store = memoryStore();
+    store.set('binding-1::owner-1::claude', {
+      conversationId: 'conv-old',
+      acpSessionId: 'acp-old',
+      providerId: 'claude',
+      cwd: '/rigs/one',
+      toolSearch: 'on',
+      updatedAt: Date.now(),
+    });
+    const fake = makeFakeAcp();
+    const dispatcher = createSpacesDispatcher({ api: makeFakeApi().api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one', store });
+
+    expect(dispatcher.startOver('binding-1', 'owner-1')).toBe(1);
+    expect(store.get('binding-1::owner-1::claude')).toMatchObject({ retired: 'asked' });
+    // Nothing of someone else's, and nothing twice.
+    expect(dispatcher.startOver('binding-1', 'owner-2')).toBe(0);
+    expect(dispatcher.startOver('binding-1', 'owner-1')).toBe(0);
+
+    const result = await dispatcher.dispatch(makeRequest({ bindingId: 'binding-1', targetOwnerUserId: 'owner-1' }));
+    expect('failed' in result).toBe(false);
+    expect(fake.resumed).toHaveLength(0);
+    expect(fake.started).toHaveLength(1);
+    expect(fake.started[0]!.conversationId).not.toBe('conv-old');
+  });
+
+  it('startOver on a live session closes it, and the turn after it goes to a new conversation', async () => {
+    const fake = makeFakeAcp();
+    const fakeApi = makeFakeApi();
+    const dispatcher = createSpacesDispatcher({ api: fakeApi.api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one', store: memoryStore() });
+    await dispatcher.dispatch(makeRequest({ bindingId: 'binding-1', targetOwnerUserId: 'owner-1' }));
+    const first = fake.started[0]!.conversationId;
+
+    // A second turn waits behind the first (the session has not taken it yet).
+    await dispatcher.dispatch(makeRequest({ id: 'req-queued', bindingId: 'binding-1', targetOwnerUserId: 'owner-1' }));
+    expect(dispatcher.currentRunId('binding-1', 'owner-1', 'claude')).not.toBeNull();
+
+    expect(dispatcher.startOver('binding-1', 'owner-1')).toBe(1);
+    expect(fake.stopped).toContain(first);
+    // Nothing of that session is left showing as at work.
+    expect(dispatcher.currentRunId('binding-1', 'owner-1', 'claude')).toBeNull();
+    await vi.waitFor(() =>
+      expect(fakeApi.patchedSessions.filter((patch) => patch.status === 'stopped')).toHaveLength(2)
+    );
+
+    await dispatcher.dispatch(makeRequest({ id: 'req-2', bindingId: 'binding-1', targetOwnerUserId: 'owner-1' }));
+    expect(fake.started).toHaveLength(2);
+    expect(fake.started[1]!.conversationId).not.toBe(first);
+  });
+
   it('resumes once when the Room reads the agent settings while a run starts, right after a restart', async () => {
     const store = memoryStore();
     store.set('binding-1::owner-1::claude', {
@@ -2185,6 +2235,63 @@ describe('runLocal (doc comments in a space)', () => {
     await expect(started.data.done).resolves.toEqual({ status: 'done', answer: 'A tracking bug, fixed by Alice.' });
     // Only the Room request was ever settled on the relay.
     await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'done' }]));
+  });
+});
+
+describe('onRunStarted (what started a run)', () => {
+  async function started(over: { throws?: boolean } = {}) {
+    const { api } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const seen: { startedBy: string; view: string | null; runId: string }[] = [];
+    const d = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      onRunStarted: (run) => {
+        seen.push({ startedBy: run.startedBy, view: run.view, runId: run.runId });
+        if (over.throws) throw new Error('boom');
+      },
+    });
+    return { d, seen, fake };
+  }
+  const local = { bindingId: 'binding-1', ownerUserId: 'owner-1', agent: 'claude' as const, prompt: 'Hi' };
+
+  it("says 'message' for a room request, 'view' for a view's turn, 'comment' for a plain one", async () => {
+    const { d, seen } = await started();
+    await d.dispatch(makeRequest());
+    await d.runLocal({ ...local, view: 'drafts' });
+    await d.runLocal(local);
+    expect(seen.map((s) => [s.startedBy, s.view])).toEqual([['message', null], ['view', 'drafts'], ['comment', null]]);
+  });
+  it('passes along what the caller said started it', async () => {
+    const { d, seen } = await started();
+    await d.runLocal({ ...local, view: 'drafts', startedBy: 'clock' });
+    expect(seen[0]).toMatchObject({ startedBy: 'clock', view: 'drafts' });
+  });
+  it('records what started a run nobody typed a message for, and nothing for a message', async () => {
+    const fakeApi = makeFakeApi();
+    const fake = makeFakeAcp();
+    const d = createSpacesDispatcher({ api: fakeApi.api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+    const triggerOf = (runId: string) => {
+      for (const batch of fakeApi.postedEvents.filter((b) => b.runId === runId)) {
+        const at = batch.kinds.indexOf('run_trigger');
+        if (at !== -1) return batch.payloads[at];
+      }
+      return undefined;
+    };
+    const pressed = await d.runLocal({ ...local, view: 'drafts', pressed: { label: 'Approve', item: 'A post', note: 'ship it' } });
+    const scheduled = await d.runLocal({ ...local, view: 'drafts', startedBy: 'clock' });
+    const asked = await d.dispatch(makeRequest());
+    if (!pressed.success || !scheduled.success || !('runId' in asked)) throw new Error('a run did not start');
+    await vi.waitFor(() => expect(triggerOf(pressed.data.runId)).toEqual({ by: 'view', view: 'drafts', label: 'Approve', item: 'A post', note: 'ship it' }));
+    await vi.waitFor(() => expect(triggerOf(scheduled.data.runId)).toEqual({ by: 'clock', view: 'drafts' }));
+    expect(triggerOf(asked.runId)).toBeUndefined();
+  });
+  it('does not fail the turn when the listener throws', async () => {
+    const { d, seen } = await started({ throws: true });
+    const result = await d.runLocal(local);
+    expect(result.success).toBe(true);
+    expect(seen).toHaveLength(1);
   });
 });
 
@@ -2622,7 +2729,7 @@ describe('rig tools', () => {
         rigTools: async () => (withRig ? rigServer('rig-token') : null),
       });
       const result = await dispatcher.dispatch(makeRequest({ targetAgent: agent }));
-      if ('failed' in result) throw new Error('expected success');
+      if (!('runId' in result)) throw new Error('expected success');
       const conversationId = fake.started[0]!.conversationId;
       fake.emitTurnStart(conversationId, fake.queued[0]!.turnId);
       const requested = () =>
@@ -2747,7 +2854,7 @@ describe('Room sees', () => {
     });
 
     const result = await dispatch(makeRequest());
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
     const { turnId, hiddenContext } = fake.queued[0];
     fake.emitTurnStart(conversationId, turnId);
@@ -2783,7 +2890,7 @@ describe('Room sees', () => {
     const fake = makeFakeAcp();
     const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
     const result = await dispatch(makeRequest());
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     fake.emitTurnStart(fake.started[0].conversationId, fake.queued[0].turnId);
     fake.emitTurnEnd(fake.started[0].conversationId, fake.queued[0].turnId, 'end_turn');
     await vi.waitFor(() => expect(postedPrivacy).toEqual([{ runId: result.runId, payload: { level: 'everything' } }]));
@@ -3134,7 +3241,7 @@ describe('a turn that only reacted', () => {
     const fake = makeFakeAcp();
     const dispatcher = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
     const result = await dispatcher.dispatch(makeRequest());
-    if ('failed' in result) throw new Error('expected success');
+    if (!('runId' in result)) throw new Error('expected success');
     const conversationId = fake.started[0]!.conversationId;
     const turnId = fake.queued[0]!.turnId;
     fake.emitTurnStart(conversationId, turnId);
@@ -3312,11 +3419,11 @@ describe('a session that stopped responding, or was lost', () => {
 
   async function runId(result: ReturnType<ReturnType<typeof createSpacesDispatcher>['dispatch']>): Promise<string> {
     const settled = await result;
-    if ('failed' in settled) throw new Error(`expected a run: ${settled.reason ?? 'no reason'}`);
+    if (!('runId' in settled)) throw new Error(`expected a run: ${'reason' in settled ? (settled.reason ?? 'no reason') : 'duplicate'}`);
     return settled.runId;
   }
 
-  it('a prompt the agent never answers fails in the chat after 10 minutes, with a Retry that starts a new conversation', async () => {
+  it('a prompt the agent never answers fails in the chat after 2 minutes, with a Retry that starts a new conversation', async () => {
     const ctx = setup();
     const run = await runId(ctx.dispatcher.dispatch(makeRequest()));
     const stuck = ctx.fake.started[0]!.conversationId;
@@ -3332,7 +3439,7 @@ describe('a session that stopped responding, or was lost', () => {
       status: 'failed',
       reason: stalledReason(false),
     });
-    expect(stalledReason(false)).toBe('No reply for 10 minutes, so Rig stopped waiting. Retry starts a new conversation.');
+    expect(stalledReason(false)).toBe('No reply for 2 minutes, so Rig stopped waiting. Retry starts a new conversation.');
     expect(ctx.failures).toEqual([expect.objectContaining({ phase: 'stalled' })]);
     // The stuck session is closed (ending a wedged agent process), not left to take the next prompt.
     expect(ctx.fake.stopped).toEqual([stuck]);
@@ -3346,11 +3453,22 @@ describe('a session that stopped responding, or was lost', () => {
     expect(ctx.fake.queued[1]!.hiddenContext).toContain('This is a fresh session');
   });
 
-  it('a prompt that never even started counts from when it was sent', async () => {
+  it('a prompt the session never took goes to a new conversation by itself, once; a second silence fails', async () => {
     const ctx = setup();
     const run = await runId(ctx.dispatcher.dispatch(makeRequest()));
-    // No turn_start at all: the prompt never reached the agent.
+    const stuck = ctx.fake.started[0]!.conversationId;
+    // No turn_start at all: the prompt never reached the agent, so nothing of it has run.
     ctx.dispatcher.reportStalled(Date.now() + RUN_NO_REPLY_MS + 1_000);
+    await vi.waitFor(() => expect(ctx.fake.started).toHaveLength(2));
+    expect(ctx.fake.stopped).toContain(stuck);
+    await vi.waitFor(() => expect(ctx.fake.queued).toHaveLength(2));
+    expect(ctx.fake.queued[1]!.conversationId).toBe(ctx.fake.started[1]!.conversationId);
+    // Same run, told in its card; not ended.
+    await vi.waitFor(() => expect(ctx.eventsOf(run).map((e) => e.kind)).toContain('run_retried'));
+    expect(ctx.eventsOf(run).map((e) => e.kind)).not.toContain('turn_ended');
+
+    // The new conversation is silent too: now it fails, with a Retry.
+    ctx.dispatcher.reportStalled(Date.now() + 2 * RUN_NO_REPLY_MS + 2_000);
     await vi.waitFor(() => expect(ctx.eventsOf(run).map((e) => e.kind)).toContain('turn_ended'));
     expect(ctx.eventsOf(run).find((e) => e.kind === 'turn_ended')?.payload).toMatchObject({ status: 'failed' });
   });
@@ -3398,6 +3516,8 @@ describe('a session that stopped responding, or was lost', () => {
     const ctx = setup(store);
     await runId(ctx.dispatcher.dispatch(makeRequest()));
     const stuck = ctx.fake.started[0]!.conversationId;
+    // The turn started, then nothing: it fails (a prompt never taken at all would move by itself).
+    ctx.fake.emitTurnStart(stuck, ctx.fake.queued[0]!.turnId);
     ctx.dispatcher.reportStalled(Date.now() + RUN_NO_REPLY_MS + 1_000);
     await vi.waitFor(() => expect(store.get('binding-1::owner-1::claude')?.retired).toBe('stalled'));
 
@@ -3611,5 +3731,222 @@ describe('a run that failed on its sign-in', () => {
     await vi.waitFor(() => expect(ctx.failures).toHaveLength(1));
     expect(ctx.fake.queued).toHaveLength(1);
     expect(ctx.postedEvents.flatMap((p) => p.kinds)).not.toContain('run_retried');
+  });
+});
+
+describe('a quiet turn (quietCard) and one free rename (renameOnce)', () => {
+  const renameRequest = (id = 'perm-rename'): AcpPermissionRequest =>
+    makePermissionRequest({
+      requestId: id,
+      toolCall: {
+        id: 't9',
+        seq: 1,
+        toolCallId: `t-${id}`,
+        title: 'mcp__rig__rig_space_rename',
+        status: 'running',
+        kind: 'other-tool-call',
+      } as unknown as AcpPermissionRequest['toolCall'],
+    });
+
+  async function quiet(over: { quietCard?: { silentAnswer: string }; renameOnce?: boolean } = {}) {
+    const fakeApi = makeFakeApi();
+    const fake = makeFakeAcp();
+    const dispatcher = createSpacesDispatcher({ api: fakeApi.api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+    const started = await dispatcher.runLocal({
+      bindingId: 'binding-1',
+      ownerUserId: 'owner-1',
+      agent: 'claude',
+      prompt: 'Looking over this space.',
+      startedBy: 'gardener',
+      ...over,
+    });
+    if (!started.success) throw new Error(started.error);
+    const conversationId = fake.started[0].conversationId;
+    const turnId = fake.queued[0].turnId;
+    fake.emitTurnStart(conversationId, turnId);
+    const say = (text: string) =>
+      fake.emitUpdate(conversationId, { sessionUpdate: 'agent_message_chunk', messageId: 'm1', content: { type: 'text', text } });
+    const cards = () => fakeApi.postedMessages.filter((m) => m.kind === 'session');
+    return { ...fakeApi, fake, dispatcher, started, conversationId, turnId, say, cards };
+  }
+  const silent = { silentAnswer: 'All is well.' };
+
+  it('posts no card at the start of a quiet turn, and none for the silent answer', async () => {
+    const t = await quiet({ quietCard: silent });
+    expect(t.cards()).toHaveLength(0);
+    t.say('all is well.');
+    t.fake.emitTurnEnd(t.conversationId, t.turnId, 'end_turn');
+    await expect(t.started.data.done).resolves.toMatchObject({ status: 'done' });
+    expect(t.cards()).toHaveLength(0);
+  });
+
+  it('posts one card pointing at the run when the answer has something to say', async () => {
+    const t = await quiet({ quietCard: silent });
+    t.say('The Monday view has not refreshed since Friday.');
+    t.fake.emitTurnEnd(t.conversationId, t.turnId, 'end_turn');
+    await t.started.data.done;
+    expect(t.cards()).toHaveLength(1);
+    expect(t.cards()[0]).toMatchObject({ meta: { runId: t.started.data.runId } });
+  });
+
+  it('posts the card at once, and only once, when an approval is held', async () => {
+    const t = await quiet({ quietCard: silent });
+    t.fake.emitPermissionRequest(t.conversationId, makePermissionRequest());
+    await vi.waitFor(() => expect(t.cards()).toHaveLength(1));
+    t.fake.emitPermissionRequest(t.conversationId, makePermissionRequest({ requestId: 'perm-2' }));
+    t.say('Needs a decision.');
+    t.fake.emitTurnEnd(t.conversationId, t.turnId, 'end_turn');
+    await t.started.data.done;
+    expect(t.cards()).toHaveLength(1);
+  });
+
+  it('posts nothing for a failed or stopped quiet turn', async () => {
+    for (const stopReason of [null, 'cancelled']) {
+      const t = await quiet({ quietCard: silent });
+      t.say('Something half said.');
+      t.fake.emitTurnEnd(t.conversationId, t.turnId, stopReason);
+      await t.started.data.done;
+      expect(t.cards()).toHaveLength(0);
+    }
+  });
+
+  it('posts the card at the start when the turn is not quiet', async () => {
+    const t = await quiet();
+    expect(t.cards()).toHaveLength(1);
+  });
+
+  it('allows the first rename of a renameOnce turn, once, and holds a second', async () => {
+    const t = await quiet({ renameOnce: true });
+    t.fake.emitPermissionRequest(t.conversationId, renameRequest('r1'));
+    expect(t.fake.resolvedPermissions).toEqual([{ conversationId: t.conversationId, requestId: 'r1', optionId: 'allow-once' }]);
+    t.fake.emitPermissionRequest(t.conversationId, renameRequest('r2'));
+    expect(t.fake.resolvedPermissions).toHaveLength(1);
+    await expect(t.dispatcher.resolvePermission(t.started.data.runId, 'r2', 'allow-once')).resolves.toBe(true);
+    t.fake.emitTurnEnd(t.conversationId, t.turnId, 'end_turn');
+    await t.started.data.done;
+    const events = t.postedEvents.flatMap((p) => p.kinds.map((kind, i) => ({ kind, payload: p.payloads[i] as Record<string, unknown> })));
+    expect(events.find((e) => e.kind === 'permission_decided')?.payload).toMatchObject({
+      requestId: 'r1',
+      optionId: 'allow-once',
+      outcome: 'allowed',
+    });
+  });
+
+  it('holds a rename in a turn without renameOnce, and leaves other tools alone', async () => {
+    const t = await quiet();
+    t.fake.emitPermissionRequest(t.conversationId, renameRequest());
+    expect(t.fake.resolvedPermissions).toEqual([]);
+    const t2 = await quiet({ renameOnce: true });
+    t2.fake.emitPermissionRequest(t2.conversationId, makePermissionRequest());
+    expect(t2.fake.resolvedPermissions).toEqual([]);
+  });
+});
+
+describe('one message, one turn', () => {
+  function setup(...args: [feed?: (() => boolean) | undefined]) {
+    const feed = args.length ? args[0] : () => true;
+    const fakeApi = makeFakeApi();
+    const fake = makeFakeAcp();
+    const dispatcher = createSpacesDispatcher({ api: fakeApi.api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one', feed });
+    return { ...fakeApi, fake, dispatcher };
+  }
+  const from = (sourceMessageId: string | null, over: Partial<AgentRequest> = {}) => makeRequest({ sourceMessageId, ...over });
+
+  it('starts one session for two requests from the same message, owner and agent', async () => {
+    const { createdRuns, dispatcher } = setup();
+    const first = await dispatcher.dispatch(from('m1', { id: 'a' }));
+    if (!('runId' in first)) throw new Error('expected a run');
+    const second = await dispatcher.dispatch(from('m1', { id: 'b' }));
+    expect(second).toEqual({ duplicateOf: first.runId });
+    expect(createdRuns).toHaveLength(1);
+  });
+
+  it('starts one session when both are fired without awaiting the first', async () => {
+    const { createdRuns, dispatcher } = setup();
+    const [a, b] = await Promise.all([dispatcher.dispatch(from('m1', { id: 'a' })), dispatcher.dispatch(from('m1', { id: 'b' }))]);
+    expect(createdRuns).toHaveLength(1);
+    expect([a, b].filter((r) => 'runId' in r)).toHaveLength(1);
+    expect([a, b].filter((r) => 'duplicateOf' in r)).toHaveLength(1);
+  });
+
+  it('starts two for different messages, and two for the other agent', async () => {
+    const { createdRuns, dispatcher } = setup();
+    await dispatcher.dispatch(from('m1', { id: 'a' }));
+    await dispatcher.dispatch(from('m2', { id: 'b' }));
+    await dispatcher.dispatch(from('m1', { id: 'c', targetAgent: 'codex' }));
+    expect(createdRuns).toHaveLength(3);
+  });
+
+  it('lets the same message start again after a failed start', async () => {
+    const { fake, dispatcher } = setup();
+    fake.setStartResult(err('boom'));
+    expect(await dispatcher.dispatch(from('m1', { id: 'a' }))).toMatchObject({ failed: true });
+    fake.setStartResult(ok({ sessionId: 'acp-new' }));
+    expect(await dispatcher.dispatch(from('m1', { id: 'b' }))).toHaveProperty('runId');
+  });
+
+  it('starts two with feed off or absent, as before', async () => {
+    for (const feed of [() => false, undefined]) {
+      const { createdRuns, dispatcher } = setup(feed);
+      await dispatcher.dispatch(from('m1', { id: 'a' }));
+      await dispatcher.dispatch(from('m1', { id: 'b' }));
+      expect(createdRuns).toHaveLength(2);
+    }
+  });
+
+  it('leaves requests with no source message alone', async () => {
+    const { createdRuns, dispatcher } = setup();
+    await dispatcher.dispatch(from(null, { id: 'a' }));
+    await dispatcher.dispatch(from(null, { id: 'b' }));
+    expect(createdRuns).toHaveLength(2);
+  });
+});
+
+describe('reading a file of the space', () => {
+  async function setup(feed: (() => boolean) | undefined) {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'rig-read-')));
+    writeFileSync(join(dir, 'plan.md'), 'hi');
+    const fakeApi = makeFakeApi();
+    const fake = makeFakeAcp();
+    const dispatcher = createSpacesDispatcher({ api: fakeApi.api, acp: fake.acp, resolveWorkspace: async () => dir, feed });
+    const result = await dispatcher.dispatch(makeRequest());
+    if (!('runId' in result)) throw new Error('expected a run');
+    const conversationId = fake.started[0].conversationId;
+    fake.emitTurnStart(conversationId, fake.queued[0].turnId);
+    return { ...fakeApi, fake, dir, conversationId, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+  const read = (path: string) =>
+    makePermissionRequest({
+      toolCall: { id: 't1', seq: 1, toolCallId: 't1', title: `Read ${path}`, status: 'running', kind: 'read-tool-call', path } as AcpPermissionRequest['toolCall'],
+    });
+  const kinds = (posted: Array<{ kinds: string[] }>) => posted.flatMap((p) => p.kinds);
+
+  it('allows it once and holds nothing, with feed on', async () => {
+    const t = await setup(() => true);
+    t.fake.emitPermissionRequest(t.conversationId, read(join(t.dir, 'plan.md')));
+    await vi.waitFor(() =>
+      expect(t.fake.resolvedPermissions).toEqual([{ conversationId: t.conversationId, requestId: 'perm-1', optionId: 'allow-once' }])
+    );
+    await vi.waitFor(() => expect(kinds(t.postedEvents)).toContain('permission_decided'));
+    expect(kinds(t.postedEvents)).not.toContain('permission_requested');
+    t.cleanup();
+  });
+
+  it('holds it for the owner with feed absent', async () => {
+    const t = await setup(undefined);
+    t.fake.emitPermissionRequest(t.conversationId, read(join(t.dir, 'plan.md')));
+    await vi.waitFor(() => expect(kinds(t.postedEvents)).toContain('permission_requested'));
+    expect(t.fake.resolvedPermissions).toEqual([]);
+    t.cleanup();
+  });
+
+  it('holds a command for the owner either way', async () => {
+    for (const feed of [() => true, undefined]) {
+      const t = await setup(feed);
+      t.fake.emitPermissionRequest(t.conversationId, makePermissionRequest());
+      await vi.waitFor(() => expect(kinds(t.postedEvents)).toContain('permission_requested'));
+      expect(t.fake.resolvedPermissions).toEqual([]);
+      t.cleanup();
+    }
   });
 });

@@ -19,7 +19,11 @@ import type { AgentRequest, SpacesRelayApi } from './relay-api';
  * retry, never treat it as a transient failure.
  */
 
-export type ClaimDispatchResult = { runId: string } | { failed: true; reason?: string };
+export type ClaimDispatchResult =
+  | { runId: string }
+  | { failed: true; reason?: string }
+  /** The same message already started a turn for this agent (that run, when known): nothing was started. */
+  | { duplicateOf: string | null };
 
 /**
  * This device's id for a given binding (minted via the relay's device-
@@ -180,6 +184,24 @@ export async function claimOne(
     result = await dispatch(claimed.data);
   } catch (error) {
     result = { failed: true, reason: String(error) };
+  }
+
+  if ('duplicateOf' in result) {
+    log.info('Rig spaces: an agent request repeats a message already asked; nothing started', {
+      requestId: request.id,
+      duplicateOf: result.duplicateOf,
+    });
+    const settled = await api.patchAgentRequest(request.bindingId, request.id, {
+      status: 'done',
+      ...(result.duplicateOf ? { runId: result.duplicateOf } : {}),
+    });
+    if (!settled.success) {
+      log.warn('Rig spaces: could not mark a repeated agent request as done', {
+        requestId: request.id,
+        error: settled.error.message,
+      });
+    }
+    return;
   }
 
   if ('failed' in result) {

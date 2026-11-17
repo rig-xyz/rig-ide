@@ -1,11 +1,16 @@
-import { Home as HomeIcon, Lock, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
+import { Home as HomeIcon, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { NewSpaceCta } from '@renderer/features/home/new-space-cta';
+import { startSpaceSetup } from '@renderer/features/spaces/space-setup-store';
+import { stepMatrix, untilInWords } from '@renderer/features/views/space-status';
+import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { Count, Face, IconButton, SessionMatrix, StatusWord } from './bits';
 import { useHome } from './home-context';
 import { type RailSession, type RailSpace, sessionLabelTone, sessionStatusWord } from './model';
 import { SPACE_DRAG_TYPE, SpaceGroups } from './rail-groups';
 import { needsYouPhrase } from './say';
+import { useFactoryOverview, type SpaceFactory } from './use-factory-overview';
 
 /**
  * Left: what's being done. Home, then your spaces in your groups, each with
@@ -33,8 +38,9 @@ export function Rail({
   updateReady: boolean;
   onOpenSettings: (page?: 'account' | 'about') => void;
 }) {
-  const { state, dispatch, spaces, counts, open, openInApp } = useHome();
+  const { state, dispatch, spaces, counts, open, openInApp, openPath } = useHome();
   const collapsed = state.collapsed;
+  const factories = useFactoryOverview(true);
   const [peek, setPeek] = useState<Peek | null>(null);
   const selected = state.selection.kind === 'session' ? state.selection.id : null;
 
@@ -71,8 +77,9 @@ export function Rail({
   );
 
   const openSpace = (space: RailSpace) => {
-    // A space opens in the app, its Room. One that exists only in this preview opens its context here.
-    if (space.root) openInApp({ space });
+    // A space opens in the app, its Room (downloaded first when it is not on this Mac yet). One that
+    // exists only in this preview opens its context here.
+    if (space.root || (space.origin === 'real' && space.bindingId)) openInApp({ space });
     else open({ kind: 'space', id: space.id });
   };
   const openSession = (space: RailSpace, session: RailSession) => {
@@ -103,6 +110,17 @@ export function Rail({
         </div>
       )}
       <div className={cn('pt-1 pb-1', collapsed ? 'px-[22px]' : 'px-3')}>
+        {/* Make a space, or join one by its link: first in the sidebar, above Home. (Inside Home's
+            own row of the rail's grid: a row of its own would take the list's stretching one.) */}
+        {!collapsed && (
+          <div className="pb-2 [-webkit-app-region:no-drag]" data-testid="rail-new-space">
+            <NewSpaceCta
+              existingNames={new Set(spaces.map((space) => space.name))}
+              onCreateSpace={startSpaceSetup}
+              onOpenPath={openPath}
+            />
+          </div>
+        )}
         <RailButton
           collapsed={collapsed}
           current={state.selection.kind === 'home'}
@@ -157,6 +175,7 @@ export function Rail({
               collapsed={collapsed}
               selected={selected}
               landed={state.landed}
+              factory={space.bindingId ? factories.get(space.bindingId) : undefined}
               onOpenSpace={() => openSpace(space)}
               onOpenSession={(session) => openSession(space, session)}
               onPeek={showPeek}
@@ -251,6 +270,7 @@ function SpaceEntry({
   onOpenSpace,
   onOpenSession,
   onPeek,
+  factory,
 }: {
   space: RailSpace;
   collapsed: boolean;
@@ -259,6 +279,8 @@ function SpaceEntry({
   onOpenSpace: () => void;
   onOpenSession: (session: RailSession) => void;
   onPeek: (el: HTMLElement, body: ReactNode) => void;
+  /** What the space is doing as a factory: a pass going now, or standing work at rest. */
+  factory?: SpaceFactory;
 }) {
   const sessions = space.sessions.map((session) => (
     <SessionEntry
@@ -318,10 +340,37 @@ function SpaceEntry({
   const unreadDot = space.unread > 0 && (
     <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-accent" />
   );
+  // A space that is a factory shows it: a grid moving while a pass is going there, idling while
+  // its standing work waits for its next run. (A space only you are in needs no lock to say so.)
+  const pulse = factory?.run ? (
+    <span
+      title={factory.run.state === 'waiting' ? 'Waiting on you' : factory.run.step || 'Working'}
+      data-testid="rail-space-factory"
+      data-state="running"
+      className="grid w-[15px] shrink-0 place-items-center"
+    >
+      <DotMatrix
+        state={stepMatrix(factory.run).state}
+        tone={stepMatrix(factory.run).tone}
+        size="sm"
+      />
+    </span>
+  ) : factory && factory.scheduled > 0 ? (
+    <span
+      title={
+        factory.nextDueAt !== null
+          ? `Runs on its own. Next: ${untilInWords(factory.nextDueAt, Date.now()).replace(/^I/, 'i')}.`
+          : 'Runs on its own while Rig is open.'
+      }
+      data-testid="rail-space-factory"
+      data-state="standby"
+      className="grid w-[15px] shrink-0 place-items-center"
+    >
+      <DotMatrix state="standby" tone="mute" size="sm" phase={space.name.length * 11} />
+    </span>
+  ) : null;
   const people =
-    space.visibility === 'private' ? (
-      <Lock aria-label="Only you" className="size-[11px] text-text-muted" strokeWidth={2} />
-    ) : space.faces.length ? (
+    space.visibility === 'private' ? null : space.faces.length ? (
       <span className="hf-stack flex">
         {space.faces.slice(0, 2).map((p) => (
           <Face key={p.id} person={p} />
@@ -356,6 +405,7 @@ function SpaceEntry({
           {space.name}
         </span>
         {unreadDot}
+        {pulse}
         {people}
       </RailButton>
       {sessions}

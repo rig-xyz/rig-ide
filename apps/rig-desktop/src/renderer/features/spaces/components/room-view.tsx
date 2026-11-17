@@ -1,4 +1,4 @@
-import { AtSign, Bot, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
+import { AtSign, Bot, Hash, Pause, Play, RadioTower, Repeat, Sparkles, UserPlus } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { deriveRoomConnection } from '@renderer/features/home/home-connection';
@@ -32,6 +32,9 @@ import { resolveSpaceLink } from '../space-link';
 import { requestBrowserMode } from '@renderer/features/artifact/view-request';
 import { isHtmlPath } from '@shared/spaces/rig-file';
 import { effectiveRunStatus, runCard } from '../projection';
+import { publishRoomStatus } from '../room-status-store';
+import { startSideChat } from '@renderer/features/chat/session/side-chat';
+import { roomCommand, sideChatText, statusLines } from '../room-commands';
 import type { AgentKind, MessageMention, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { mentionPeople } from '../mentions';
 import type { RigPerson } from '@shared/rig/rig-share';
@@ -45,6 +48,9 @@ import { useRoomThemeRequest } from '../room-theme-request';
 import type { ForYouState } from '../use-for-you';
 import { useRoomThemesEnabled } from '../use-room-themes-enabled';
 import { ForYouFeeder } from './for-you-feeder';
+import { FactoryPill, type FactoryPillProps } from './factory-pill';
+import { SpaceViewLinksContext, type SpaceViewLinks } from './run-trigger-line';
+import { TopicBar } from './topic-bar';
 import { ThemeDock } from './theme-dock';
 import { AttachmentSpaceContext, type AttachmentSpace } from './attachment-cards';
 import { Composer, keepUnsentAsDraft, type ComposerPreview, type ComposerSendContext } from './composer';
@@ -69,6 +75,7 @@ import { useSpacesChatView } from '../use-chat-view';
 import { ReactionsContext, type ReactionsApi } from './reactions';
 import { AgentSetupDialog } from '@renderer/features/agents/agent-install';
 import { AgentProblemLine } from '@renderer/features/agents/agent-problem-line';
+import { useAlphaEnabled } from '@renderer/features/home-feed/use-new-home-enabled';
 import { openInviteForm } from '@renderer/features/rig-share/open-invite';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { SpaceRail } from './space-rail';
@@ -190,19 +197,33 @@ const FALLBACK_OWN_ID = 'bob'; // fixture-only identity; the relay source uses t
  * (tokens.css), so this needs no gate of its own.
  */
 export function RoomLoadingSkeleton() {
-  const widths = ['w-2/3', 'w-1/2', 'w-5/6'];
+  // A page of the conversation's shape, readable against the sheet: the Room opening must not
+  // look like an empty dark pane. The oldest rows, at the top, are the faintest.
+  const rows: { width: string; second?: string }[] = [
+    { width: 'w-1/2' },
+    { width: 'w-5/6', second: 'w-2/3' },
+    { width: 'w-2/3' },
+    { width: 'w-3/4', second: 'w-1/2' },
+    { width: 'w-1/2' },
+    { width: 'w-5/6', second: 'w-3/5' },
+  ];
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col justify-end gap-5 px-3 pb-6"
+      className="flex min-h-0 flex-1 flex-col justify-end gap-6 overflow-hidden px-3 pb-8"
       data-testid="room-loading-skeleton"
       aria-hidden="true"
     >
-      {widths.map((width, i) => (
-        <div key={i} className="mx-auto flex w-full max-w-[44rem] items-start gap-3 px-3" style={{ opacity: 1 - i * 0.22 }}>
-          <span className="bg-bg-2 size-7 shrink-0 animate-pulse rounded-full" />
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-1">
-            <span className="bg-bg-2 h-2 w-20 animate-pulse rounded-full" />
-            <span className={cn('bg-bg-2 h-2 animate-pulse rounded-full', width)} />
+      {rows.map((row, i) => (
+        <div
+          key={i}
+          className="mx-auto flex w-full max-w-[44rem] items-start gap-3 px-3"
+          style={{ opacity: 0.35 + (i / (rows.length - 1)) * 0.65 }}
+        >
+          <span className="bg-bg-3 size-7 shrink-0 animate-pulse rounded-full" />
+          <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
+            <span className="bg-bg-3 h-2 w-24 animate-pulse rounded-full" />
+            <span className={cn('bg-bg-3 h-2 animate-pulse rounded-full', row.width)} />
+            {row.second && <span className={cn('bg-bg-3 h-2 animate-pulse rounded-full', row.second)} />}
           </div>
         </div>
       ))}
@@ -211,7 +232,7 @@ export function RoomLoadingSkeleton() {
 }
 
 /**
- * A space with nothing in it yet: what it is, and three ways in. While the
+ * A space with nothing in it yet: what it is, and three ways in (four with Rig Alpha: handing off recurring work). While the
  * Room is still opening, the loading skeleton. Ask names the agent you have
  * on this Mac; with none, it offers to set one up and Invite opens the
  * invite form instead of asking an agent to invite.
@@ -221,6 +242,7 @@ export function RoomWelcome({
   connecting,
   hasSkills,
   agent,
+  standingWork,
   onPrefill,
   onInvite,
   onSetUpAgent,
@@ -230,6 +252,8 @@ export function RoomWelcome({
   hasSkills: boolean;
   /** Your agent the buttons use: the first one set up on this Mac; null for none. */
   agent: AgentKind | null;
+  /** Rig Alpha: also offer a way in to recurring work. */
+  standingWork: boolean;
   onPrefill: (text: string) => void;
   onInvite: () => void;
   onSetUpAgent: () => void;
@@ -270,6 +294,17 @@ export function RoomWelcome({
           <button type="button" className={action} onClick={onSetUpAgent} data-testid="room-welcome-set-up">
             <Bot className="size-3.5 text-text-muted" strokeWidth={1.5} />
             Set up an agent
+          </button>
+        )}
+        {standingWork && agent && (
+          <button
+            type="button"
+            className={action}
+            onClick={() => onPrefill(`@${agent} Keep doing this for me: `)}
+            data-testid="room-welcome-standing"
+          >
+            <Repeat className="size-3.5 text-text-muted" strokeWidth={1.5} />
+            Hand off recurring work
           </button>
         )}
         {hasSkills && (
@@ -375,6 +410,7 @@ export function RoomView({
   onOpenFile,
   onOpenPage,
   onOpenSession,
+  factory,
   openDoc = null,
   renderPanel,
   collapsed = false,
@@ -394,6 +430,11 @@ export function RoomView({
   onOpenPage?: (url: string, title: string) => void;
   /** Opens one of your own sessions in this space beside the Room; the dock lists them under "Just you". */
   onOpenSession?: (sessionId: string) => void;
+  /**
+   * Rig Alpha, in a space: the dock is the pill down the right edge (`factory-pill.tsx`), with the
+   * space's standing work at its head. Absent: the horizontal dock, as it always was.
+   */
+  factory?: Pick<FactoryPillProps, 'views' | 'onOpenView'>;
   /** The doc open beside the Room (its path in the space), if any. */
   openDoc?: string | null;
   /** Renders the live space panel (the rig's pinned card), given the Room's own rows to add to it. */
@@ -451,6 +492,12 @@ export function RoomView({
     roomSourceCache.peek(bindingId) ? (roomSourceCache.connection?.selfUserId ?? FALLBACK_OWN_ID) : FALLBACK_OWN_ID
   );
   const [snapshot, setSnapshot] = useState(() => source?.getSnapshot() ?? null);
+  // What is running here, for the tabs rail (`room-status-store.ts`).
+  useEffect(() => {
+    if (!bindingId) return;
+    publishRoomStatus(bindingId, snapshot);
+    return () => publishRoomStatus(bindingId, null);
+  }, [bindingId, snapshot]);
   const [playing, setPlaying] = useState(false);
   const [replyTo, setReplyTo] = useState<RoomReplyRef | null>(null);
   const [gallery, setGallery] = useState<{
@@ -562,6 +609,11 @@ export function RoomView({
         : [],
     [members, invites, yourPeople]
   );
+  // Pending invites, named or not: while one is out, the space isn't just you and your agent.
+  const invitedCount = useMemo(
+    () => (invites ? Object.values(invites).filter((i) => i.status === 'sent' && !i.revoked).length : 0),
+    [invites]
+  );
   // "Invite and send": an invite aimed at that person, Can edit; the bell tells them.
   const invitePerson = useCallback(
     async (person: MessageMention): Promise<boolean> => {
@@ -592,8 +644,12 @@ export function RoomView({
   });
   // The panel floats over the Room. The centered transcript only moves left
   // by as much as it takes to clear it, and not at all in a wide window.
+  // Until the Room has been measured (`bodyWidth` 0, the first frame after the skeleton) nothing
+  // is cleared: taking the unmeasured width for a real one squeezed the whole column to a sliver.
   const panelClearance =
-    hasPanel && !narrow ? Math.max(0, TRANSCRIPT_COLUMN_PX + 2 * PANEL_LANE_PX - bodyWidth) : 0;
+    hasPanel && !narrow && bodyWidth > 0
+      ? Math.max(0, TRANSCRIPT_COLUMN_PX + 2 * PANEL_LANE_PX - bodyWidth)
+      : 0;
   // The scripted-demo switch is a dev tool for the Room preview on plain
   // rigs; a real space (#name) never shows it.
   const showDemoToggle = !spaceName.startsWith('#');
@@ -983,6 +1039,7 @@ export function RoomView({
     },
     [source, selfUserId]
   );
+  const alphaEnabled = useAlphaEnabled();
   const availableAgents = useAvailableAgents();
   const elsewhereAgents = useOtherMacsAgents();
   // Your agents a message can ask: the ones this Mac runs and the ones your
@@ -1051,6 +1108,70 @@ export function RoomView({
     restore: (text: string) => void = (unsent) => setPrefill({ text: unsent, nonce: Date.now() })
   ) => {
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
+    // A command for Rig, not a message: nothing is posted to the Room.
+    const command = roomCommand(text, alphaEnabled);
+    if (command) {
+      const failed = (title: string) => () => {
+        restore(text);
+        toast({ title, description: 'Try again in a moment.' });
+      };
+      const unwrap = <T,>(result: { success: true; data: T } | { success: false; error: string }): T => {
+        if (!result.success) throw new Error(result.error);
+        return result.data;
+      };
+      if (command === 'side') {
+        // A private chat beside the Room, started on what was typed after "/side" (or empty,
+        // for the person to type in). It opens as a tab; the Room hears nothing of it.
+        if (!spaceRoot || !onOpenSession) {
+          restore(text);
+          toast({ title: 'A side chat can’t open here yet', description: 'Try again in a moment.' });
+          return;
+        }
+        onOpenSession(startSideChat(bindingId, spaceRoot, sideChatText(text) ?? ''));
+      } else if (command === 'new') {
+        void rpc.rig.spacesDispatch
+          .newSession({ bindingId })
+          .then(unwrap)
+          .then(() =>
+            toast({
+              title: 'New conversation',
+              description:
+                'Your next message starts a fresh session. It gets the recent chat here, not the old session.',
+            })
+          )
+          .catch(failed('Rig couldn’t start a new conversation'));
+      } else if (command === 'stop') {
+        void rpc.rig.spacesDispatch
+          .stopAll({ bindingId })
+          .then(unwrap)
+          .then(({ count }) =>
+            toast(
+              count > 0
+                ? { title: 'Stopping', description: 'If your agent doesn’t answer in a few seconds, Rig sets its session aside.' }
+                : { title: 'Nothing to stop', description: 'Your agent isn’t working on anything here.' }
+            )
+          )
+          .catch(failed('Rig couldn’t stop your agent'));
+      } else {
+        void rpc.rig.spacesDispatch
+          .sessionStatus({ bindingId })
+          .then(unwrap)
+          .then((sessions) =>
+            toast({
+              title: 'Your agent here',
+              description: (
+                <span className="flex flex-col gap-0.5">
+                  {statusLines(sessions, AGENT_NAME, Date.now()).map((line) => (
+                    <span key={line}>{line}</span>
+                  ))}
+                </span>
+              ),
+            })
+          )
+          .catch(failed('Rig couldn’t read the status'));
+      }
+      return;
+    }
     setDispatchSuggestion(null);
     // Only agents one of your Macs can run get a request: one none can would wait forever.
     const ownAgents = snapshot.agents
@@ -1402,7 +1523,9 @@ export function RoomView({
     threadShown && threadMode === 'beside'
       ? 0
       : dockGutter > 0
-        ? Math.min(dockGutter, Math.max(0, TRANSCRIPT_COLUMN_PX + 2 * dockGutter - bodyWidth))
+        ? bodyWidth > 0
+          ? Math.min(dockGutter, Math.max(0, TRANSCRIPT_COLUMN_PX + 2 * dockGutter - bodyWidth))
+          : 0
         : panelClearance;
 
   // Split-resize perf round: `RoomTranscript` memoizes its own node list
@@ -1541,6 +1664,31 @@ export function RoomView({
     </OpenPageContext.Provider>
   );
   const threadSnapshot = shownSnapshot ?? room;
+  // Rig Alpha: the dock as the pill down the right edge, with or without the pinned panel to open.
+  // The space's views, for lines in the transcript that point at a tab (what started a run).
+  // (Not memoised: this sits after the Room's early returns, where a hook may not go.)
+  const viewLinks: SpaceViewLinks | null = factory
+    ? { views: factory.views, onOpenView: factory.onOpenView }
+    : null;
+  const factoryPill = (panel?: Pick<FactoryPillProps, 'onExpand' | 'card'>) =>
+    factory ? (
+      <FactoryPill
+        key={bindingId}
+        bindingId={bindingId}
+        views={factory.views}
+        onOpenView={factory.onOpenView}
+        snapshot={shownSnapshot ?? room}
+        selfUserId={selfUserId}
+        forYouState={dockForYou}
+        focus={dockFocus}
+        onGutterChange={onDockGutter}
+        onPreviewChange={setDockPreview}
+        onTrailChange={setDockTrail}
+        mine={live && onOpenSession ? { bindingId, onOpen: onOpenSession } : undefined}
+        topicsElsewhere
+        {...panel}
+      />
+    ) : null;
   const threadPanel =
     threadShown && openRoot && openThread
       ? withRoomContexts(
@@ -1586,6 +1734,7 @@ export function RoomView({
                 agentModels={lastModels(room, selfUserId)}
                 members={room.members}
                 people={mentionable}
+                invited={invitedCount}
                 onInvitePerson={live ? invitePerson : undefined}
                 agents={room.agents.filter((a) => a.owner === selfUserId)}
                 availableAgents={availableAgents}
@@ -1632,7 +1781,8 @@ export function RoomView({
 
   return (
     <AgentSettingsContext.Provider value={agentSettingsApi}>
-    <div ref={roomRootRef} className="bg-bg-0 relative flex h-full min-h-0 flex-col" data-testid="room-view">
+    <SpaceViewLinksContext.Provider value={viewLinks}>
+    <div ref={roomRootRef} className="bg-bg-0 room-arrive relative flex h-full min-h-0 flex-col" data-testid="room-view">
       {/* Room chrome round: a real space (#name) is already named in the
           app's single top bar — this row used to repeat it. It survives
           only for the Room-preview overlay on a plain rig (`showDemoToggle`,
@@ -1670,7 +1820,14 @@ export function RoomView({
         {/* Wide: keep the transcript clear of the floating panel. Narrow:
             the panel starts as its chip instead of covering the messages. */}
         <motion.div
-          className={cn('relative flex min-h-0 flex-1 flex-col', threadPanel && threadMode === 'replace' && 'hidden')}
+          className={cn(
+            // min-w-0: a long line in the transcript must not hold the Room wider than its pane
+            // (a page opened beside it would then cover the composer). With the pill down the
+            // right edge, both sides stay clear of it, so the column stays centred.
+            'relative flex min-h-0 min-w-0 flex-1 flex-col',
+            factory && 'px-12',
+            threadPanel && threadMode === 'replace' && 'hidden'
+          )}
           // The transcript's own room: clear of the panel, and of the dock's
           // pills once there are some (it slides over only when the dock changes).
           initial={false}
@@ -1735,13 +1892,14 @@ export function RoomView({
               // Not known yet: Claude, as before. Known: the first one this Mac
               // runs, else one your other Mac runs.
               agent={availableAgents ? (availableAgents[0] ?? elsewhereAgents?.[0] ?? null) : 'claude'}
+              standingWork={alphaEnabled}
               onPrefill={(text) => setPrefill({ text, nonce: Date.now() })}
               onInvite={openInviteForm}
               onSetUpAgent={() => setSetUpAgent('none')}
             />
           ) : (
           withRoomContexts(
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {/* Under the search's results the chat stays as it was (scroll and all), only hidden. */}
           <div
             className={cn('flex min-h-0 flex-1 flex-col', searchActive && 'invisible')}
@@ -1797,6 +1955,16 @@ export function RoomView({
           )
           )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
+            {/* With the pill down the edge, the topics sit here, above the composer, with their names. */}
+            {factory && (
+              <TopicBar
+                snapshot={shownSnapshot ?? room}
+                focus={dockFocus}
+                forYouState={dockForYou}
+                onPreviewChange={setDockPreview}
+                className="mb-2"
+              />
+            )}
             {/* No live socket: the source polls instead, so nothing is
                 broken, just a few seconds behind. A quiet note, not an alarm. */}
             {/* Files here go stale without a word when sync isn't running on this computer: say so. */}
@@ -1843,6 +2011,7 @@ export function RoomView({
               agentModels={lastModels(room, selfUserId)}
               members={room.members}
               people={mentionable}
+              invited={invitedCount}
               onInvitePerson={live ? invitePerson : undefined}
               // Own agents only: @claude/@codex always means the sender's
               // own agent (no cross-person delegation in the MVP).
@@ -1931,7 +2100,10 @@ export function RoomView({
                 <SpaceChipSummary snapshot={room} selfUserId={selfUserId} unseenCount={unseenCount} />
               ),
               collapsedDock: dockOn
-                ? ({ onExpand, onFold, open, card }) => (
+                ? ({ onExpand, onFold, open, card }) =>
+                    factory ? (
+                      factoryPill({ onExpand, card: { open, content: card, onFold } })
+                    ) : (
                     <ThemeDock
                       key={bindingId}
                       snapshot={shownSnapshot ?? room}
@@ -1949,13 +2121,15 @@ export function RoomView({
                       mine={live && onOpenSession ? { bindingId, onOpen: onOpenSession } : undefined}
                       className="absolute top-[52px] right-4"
                     />
-                  )
+                    )
                 : undefined,
             }
           ) ??
             // Something open beside the Room (no space panel then): the dock stands alone,
             // so your sessions stay in reach while one is open.
-            (dockOn ? (
+            (dockOn && factory ? (
+              factoryPill()
+            ) : dockOn ? (
               <ThemeDock
                 key={bindingId}
                 snapshot={shownSnapshot ?? room}
@@ -1972,6 +2146,8 @@ export function RoomView({
                 className="absolute top-[52px] right-4"
               />
             ) : null))
+        ) : dockOn && factory ? (
+          factoryPill()
         ) : dockOn ? (
           // The scripted demo has no pinned panel to open: the dock stands alone.
           <ThemeDock
@@ -2007,6 +2183,7 @@ export function RoomView({
         )}
       </div>
     </div>
+    </SpaceViewLinksContext.Provider>
     </AgentSettingsContext.Provider>
   );
 }

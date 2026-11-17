@@ -6,6 +6,8 @@ import {
   effectiveRunStatus,
   newSessionCard,
   projectSessionCard,
+  stepDescription,
+  stepLabel,
   summarizeCard,
 } from './projection';
 import type { SessionEvent } from './types';
@@ -325,5 +327,47 @@ describe('projectSessionCard — Room sees', () => {
       { seq: 5, kind: 'details_hidden', payload: { steps: 3 } },
     ]);
     expect(card).toMatchObject({ detailsHidden: true, privateSteps: 3, finalAnswer: 'Answer.' });
+  });
+});
+
+describe('a step in the agent\'s own words', () => {
+  it('takes a command\'s description when the agent wrote one', () => {
+    expect(stepDescription({ command: 'ls views', description: '  List the views\n files ' })).toBe(
+      'List the views files'
+    );
+    expect(stepDescription({ command: 'ls views' })).toBeUndefined();
+    expect(stepDescription({ description: 'x'.repeat(200) })).toBeUndefined();
+    expect(stepDescription(null)).toBeUndefined();
+  });
+  it('labels a step by its description, else its title in plain words', () => {
+    expect(stepLabel({ title: 'ls views', description: 'List the views' })).toBe('List the views');
+    expect(stepLabel({ title: 'ToolSearch' })).toBe('Finding the right tool');
+    expect(stepLabel({ title: 'Read FACTORY.md' })).toBe('Read FACTORY.md');
+  });
+  it('a real run\'s command step carries its description', () => {
+    const card = projectSessionCard(FIXTURE_EVENTS['run-a-claude']);
+    expect(card.steps.find((step) => step.kind === 'execute')?.description).toBe(
+      'List directory contents'
+    );
+  });
+});
+
+describe('what started a run', () => {
+  const event = (kind: string, payload: Record<string, unknown>, seq = 1): SessionEvent =>
+    ({ seq, kind, payload, at: 0 }) as unknown as SessionEvent;
+
+  it('reads a press in a view, and keeps it through the card summary', () => {
+    const card = projectSessionCard([
+      event('run_trigger', { by: 'view', view: '1-inbox', label: '  Draft a\n post ', item: 'Alex on idea basins', note: 'short one', extra: 'dropped' }),
+    ]);
+    expect(card.trigger).toEqual({ by: 'view', view: '1-inbox', label: 'Draft a post', item: 'Alex on idea basins', note: 'short one' });
+    expect(cardFromSummary(summarizeCard(card)).trigger).toEqual(card.trigger);
+  });
+
+  it('reads a scheduled pass, and nothing from a shape it does not know', () => {
+    expect(projectSessionCard([event('run_trigger', { by: 'clock', view: 'drafts' })]).trigger).toEqual({ by: 'clock', view: 'drafts' });
+    expect(projectSessionCard([event('run_trigger', { by: 'message' })]).trigger).toBeNull();
+    expect(projectSessionCard([event('run_trigger', { by: 'view', view: '../x' })]).trigger).toEqual({ by: 'view' });
+    expect(projectSessionCard([]).trigger).toBeNull();
   });
 });

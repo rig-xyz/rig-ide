@@ -136,6 +136,13 @@ describe('Home chat', () => {
     expect(homeChatPermission(request('mcp__rig__rig_query'))).toBe('allow');
     expect(homeChatPermission(request('mcp__rig__rig_chat_read'))).toBe('no');
     expect(homeChatPermission(request('Bash'))).toBe('no');
+    // A read through one of the person's connectors goes through; a write through one never does.
+    expect(homeChatPermission(request('mcp__claude_ai_Slack__slack_search_public'))).toBe('allow');
+    expect(homeChatPermission(request('mcp__claude_ai_Linear__list_issues'))).toBe('allow');
+    expect(homeChatPermission(request('mcp__claude_ai_Slack__slack_send_message'))).toBe('no');
+    expect(homeChatPermission(request('mcp__claude_ai_Linear__save_issue'))).toBe('no');
+    // Not a connector of theirs: refused.
+    expect(homeChatPermission(request('mcp__other__list_things'))).toBe('no');
     const { acp, askPermission } = fakeAcp(() => 'x');
     const chat = createHomeChat(deps(acp));
     await chat.send('hi');

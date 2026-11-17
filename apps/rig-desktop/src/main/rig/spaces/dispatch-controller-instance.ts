@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
+import { lstat, readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app } from 'electron';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
@@ -12,11 +13,36 @@ import { reportAgentRunFailure } from '../agent-run-failure-instance';
 import { clearAgentSignInNeeded, noteAgentRunFailedForSignIn } from '../agent-sign-in-needed';
 import { findBindingConfig } from '../binding';
 import { resolveLocalPathsImpl } from '../recent-rigs';
+import { activeMac } from '../active-mac-instance';
+import { runRig } from '../create';
+import {
+  createGardener,
+  cutFacts,
+  GARDENER_SILENT_REPLY,
+  GARDENER_TICK_MS,
+  GARDENER_PROMPT,
+  spaceFingerprint,
+} from '../gardener/gardener';
+import { createFileGardenerStore } from '../gardener/gardener-store';
+import { createFileViewPassStore } from '../views/view-pass-store';
 import { rigSettingsStore } from '../settings-instance';
 import { thisMacId, thisMacName } from '../this-mac';
 import { codexProjectServersFor, connections, globalSetupFor, projectServersFor } from '../connectors/connections-instance';
 import { sessionConnectorsFor } from '../connectors/global-setup';
 import { withCodexProjectServers } from '../connectors/project-servers';
+import {
+  checkViewAct,
+  isViewName,
+  parseViewSchedule,
+  viewActPrompt,
+  viewDataPath,
+  viewMetaPath,
+  viewMetasWrittenBy,
+  viewScheduleSignature,
+  viewRefreshPrompt,
+  VIEWS_DIR,
+  viewTurnContext,
+} from '@shared/rig/views';
 import { isConnectorId, RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import {
   DETAILS_HIDDEN_EVENT,
@@ -31,6 +57,8 @@ import {
   createDeviceIdResolver,
   createRuntimeAcpSessions,
   createSpacesDispatcher,
+  roomContextLines,
+  type SpaceSessionStatus,
 } from './dispatch';
 import { SpacesDispatchController, type SpacesDispatchControllerDeps } from './dispatch-controller';
 import { createImagePreparer } from './agent-images';
@@ -39,6 +67,10 @@ import { LocalRunStore } from './local-runs';
 import { createHttpSpacesRelayApi, otherMacsAgents, type SessionAgent } from './relay-api';
 import { RequestClaimPoller, unrunnableRequestLine } from './request-claim';
 import { rigToolsServer } from './rig-tools-instance';
+import { spaceState } from '../space-state/space-state-instance';
+import type { SpaceState } from '@shared/rig/space-state';
+import { createFileViewConsentStore, createOwnViewWrites } from '../views/view-consent-store';
+import { createViewActLimit, createViewRefresher, VIEW_REFRESH_TICK_MS } from '../views/view-refresh';
 import { readAgentSessionSize } from './session-size';
 import { spaceSessionStore } from './session-store-instance';
 
@@ -132,7 +164,20 @@ function realDeps(): SpacesDispatchControllerDeps {
         rigTools: (scope) => rigToolsServer.serverFor(scope),
         feed: () => rigSettingsStore.get().alphaEnabled,
         roomSees: (bindingId) => roomSeesFor(rigSettingsStore.get().spacesRoomSees, bindingId, rigSettingsStore.get().spacesRoomSeesDefault),
-        recordLocal: (bindingId, runId, event) => localRuns.append(bindingId, runId, event),
+        recordLocal: (bindingId, runId, event) => {
+          localRuns.append(bindingId, runId, event);
+          // A `view.json` this Mac's own session writes carries a schedule its person agreed to.
+          if (event.kind === 'tool_call' || event.kind === 'tool_call_update') {
+            for (const { view, schedule } of viewMetasWrittenBy(event.payload)) {
+              ownViewWrites.mark(bindingId, view, schedule ? viewScheduleSignature(schedule) : null);
+            }
+          }
+          // From here, not `localRuns.subscribe`: that one stops after a run overflows its budget.
+          if (rigSettingsStore.get().alphaEnabled) spaceState.runEvent(bindingId, runId, event);
+        },
+        onRunStarted: (run) => {
+          if (rigSettingsStore.get().alphaEnabled) spaceState.runStarted(run);
+        },
         // Attached images go in as image content, shrunk to fit when they must.
         prepareImage: createImagePreparer(join(app.getPath('temp'), 'rig-agent-images')),
         codexVersion: () => localDependencyManager.get('codex')?.version ?? null,
@@ -145,7 +190,10 @@ function realDeps(): SpacesDispatchControllerDeps {
           const settings = rigSettingsStore.get();
           const model = settings.lastModelByHarness[agent];
           const effort = settings.lastEffortByHarness[agent];
-          const mode = settings.lastModeByHarness[agent];
+          // No mode picked yet: Claude starts in its auto mode, where it carries on with what is
+          // safe and stops for what is not, as Claude's own apps do. (Where the model has no
+          // auto mode, Claude's adapter falls back by itself.) Codex keeps its own default.
+          const mode = settings.lastModeByHarness[agent] ?? (agent === 'claude' ? ROOM_DEFAULT_MODE : undefined);
           return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(mode ? { mode } : {}) };
         },
       });
@@ -197,8 +245,11 @@ async function otherMacsAgentsNow(): Promise<SessionAgent[] | null> {
 
 export const spacesDispatchController = new SpacesDispatchController(realDeps());
 
+/** The permission mode a person's Claude starts a space session in until they pick one themselves. */
+export const ROOM_DEFAULT_MODE = 'auto';
+
 /** How often running turns are checked for a long silence (`reportStalled`). */
-const STALL_CHECK_MS = 60_000;
+const STALL_CHECK_MS = 30_000;
 
 /** Ends runs that went quiet as failed, with a Retry in a new conversation (`agent_run_failed` with reason `stalled`). */
 export function wireStalledRunCheck(): void {
@@ -278,11 +329,357 @@ export async function runCommentTurnInRoom(spec: {
   });
 }
 
+const viewActLimit = createViewActLimit();
+/** Turns views started that are still going, so the view can be told when its turn is over. */
+const viewTurns = new Map<string, Promise<{ status: string }>>();
+
+/**
+ * A choice made in a Rig view (spike, Rig Alpha only): a turn in the viewing member's own session in
+ * that space. The renderer's host already checked the message; it is checked again here, and the
+ * person is whoever is signed in on this Mac, never something the page or the renderer said.
+ */
+async function runViewAct(spec: {
+  bindingId: string;
+  view: string;
+  intent: string;
+  payload: Record<string, string>;
+  /** The words on what was pressed, and the title of the item it was pressed on, as the view shows them. */
+  label?: string;
+  item?: string;
+}): Promise<Result<{ runId: string | null }, string>> {
+  if (!rigSettingsStore.get().alphaEnabled) return err('Views are part of Rig Alpha.');
+  if (!isViewName(spec.view)) return err('Not a view.');
+  const bad = checkViewAct(spec);
+  if (bad) return err(`That action was refused (${bad}).`);
+  if (!spacesDispatchController.isRunning()) return err('Spaces is not running.');
+  const workspaces = await rigAccountController.workspaces();
+  if (!workspaces.success || !workspaces.data.some((b) => b.id === spec.bindingId && b.kind === 'space')) {
+    return err('This is not a space.');
+  }
+  const me = await rigAccountController.me();
+  if (!me.success) return err(me.error.message);
+  const refused = viewActLimit.refuse(spec, Date.now());
+  // The same choice, sent again: it is already on its way. No turn, and nothing to report.
+  if (refused === 'repeat') return ok({ runId: null });
+  if (refused === 'flood') return err('This view has sent a lot in the last minute. Try again shortly.');
+  const prompt = viewActPrompt({
+    view: spec.view,
+    person: me.data.name ?? me.data.email ?? 'a member',
+    intent: spec.intent,
+    payload: spec.payload,
+  });
+  log.info('Rig views: action goes to your session', { bindingId: spec.bindingId, view: spec.view, intent: spec.intent });
+  const started = await spacesDispatchController.runLocal({
+    bindingId: spec.bindingId,
+    ownerUserId: me.data.id,
+    agent: 'claude',
+    prompt,
+    extraHiddenContext: viewTurnContext(spec.view),
+    view: spec.view,
+    startedBy: 'view',
+    // For the line above the run's card in the Room; `parseRunTrigger` cuts each to one short line.
+    pressed: { label: spec.label, item: spec.item, note: spec.payload.note },
+  });
+  if (!started) return err('Spaces is not running.');
+  if (!started.success) return err(started.error);
+  const { runId, done } = started.data;
+  viewTurns.set(runId, done);
+  void done.finally(() => setTimeout(() => viewTurns.delete(runId), 60_000));
+  return ok({ runId });
+}
+
+/** Resolves when the turn a view action started is over, so the view can stop showing it as sent. */
+async function viewActDone({ runId }: { runId: string }): Promise<{ ok: boolean }> {
+  const done = viewTurns.get(runId);
+  if (!done) return { ok: true };
+  const { status } = await done;
+  return { ok: status !== 'failed' };
+}
+
+/** The views in a space folder, for the refresh timer: each one's `view.json` and its data's age. */
+async function readSpaceViews(path: string): Promise<{ name: string; meta: string | null; dataModifiedMs: number | null }[]> {
+  let names: string[];
+  try {
+    names = (await readdir(join(path, VIEWS_DIR), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && isViewName(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+  return Promise.all(
+    names.map(async (name) => ({
+      name,
+      meta: await readFile(join(path, viewMetaPath(name)), 'utf8').catch(() => null),
+      dataModifiedMs: await stat(join(path, viewDataPath(name))).then((info) => info.mtimeMs, () => null),
+    }))
+  );
+}
+
+/** The `view.json` files this Mac's own sessions just wrote (`views/view-consent-store.ts`). */
+const ownViewWrites = createOwnViewWrites(() => Date.now());
+
+/** The view clock, kept so the state read can ask it to look at a space (`rigSpaceStateController`). */
+let refresher: ReturnType<typeof createViewRefresher> | null = null;
+
+/** Starts the timer that refreshes views whose `view.json` asks for it (`views/view-refresh.ts`). */
+export function wireViewRefresh(): void {
+  refresher = createViewRefresher({
+    enabled: () => rigSettingsStore.get().alphaEnabled && spacesDispatchController.isRunning(),
+    me: async () => {
+      const me = await relayApi.whoami();
+      return me.success ? me.data.id : null;
+    },
+    spaces: async () => {
+      const workspaces = await rigAccountController.workspaces();
+      if (!workspaces.success) return [];
+      const ids = workspaces.data.filter((b) => b.kind === 'space').map((b) => b.id);
+      const paths = await resolveLocalPathsImpl(ids);
+      return Object.entries(paths).map(([bindingId, path]) => ({ bindingId, path }));
+    },
+    views: readSpaceViews,
+    busy: (bindingId, userId) => spacesDispatchController.currentRunId(bindingId, userId, 'claude') !== null,
+    run: async ({ bindingId, userId, view, prompt, context }) => {
+      log.info('Rig views: scheduled refresh', { bindingId, view });
+      const started = await spacesDispatchController.runLocal({
+        bindingId,
+        ownerUserId: userId,
+        agent: 'claude',
+        prompt,
+        extraHiddenContext: context,
+        view,
+        startedBy: 'clock',
+      });
+      return !!started && started.success;
+    },
+    now: () => Date.now(),
+    seen: (bindingId, me, views) => spaceState.viewsSeen(bindingId, me, views),
+    skipped: (bindingId, view, reason) => spaceState.refreshSkipped(bindingId, view, reason),
+    notStarted: (bindingId, view) => spaceState.refreshNotStarted(bindingId, view),
+    lastStarted: createFileViewPassStore(join(app.getPath('userData'), 'rig-view-passes.json')),
+    consent: createFileViewConsentStore(join(app.getPath('userData'), 'rig-view-consent.json')),
+    wroteHere: (bindingId, view, signature) => ownViewWrites.wroteHere(bindingId, view, signature),
+  });
+  const timer = refresher;
+  setInterval(() => void timer.tick().catch((error) => log.warn('Rig views: refresh tick failed', { error: String(error) })), VIEW_REFRESH_TICK_MS).unref?.();
+}
+
+const GARDENER_MAX_DEPTH = 8;
+const GARDENER_MAX_FILES = 5_000;
+
+/**
+ * The files of a space for the gardener's fingerprint. Skips dot names, `node_modules`, links and
+ * each page's `data.json` (rewritten by every refresh, so it would always look like a change).
+ * Null when the folder cannot be read.
+ */
+async function listSpaceFiles(root: string): Promise<{ relPath: string; mtimeMs: number }[] | null> {
+  const files: { relPath: string; mtimeMs: number }[] = [];
+  const walk = async (dir: string, rel: string, depth: number): Promise<boolean> => {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const entry of entries) {
+      if (files.length >= GARDENER_MAX_FILES) return true;
+      if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.isSymbolicLink()) continue;
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (depth < GARDENER_MAX_DEPTH) await walk(join(dir, entry.name), relPath, depth + 1);
+      } else if (entry.isFile()) {
+        if (/^views\/[^/]+\/data\.json$/.test(relPath)) continue;
+        const info = await lstat(join(dir, entry.name)).catch(() => null);
+        if (info) files.push({ relPath, mtimeMs: info.mtimeMs });
+      }
+    }
+    return true;
+  };
+  return (await walk(root, '', 0)) ? files : null;
+}
+
+/**
+ * Starts the gardener (`gardener/gardener.ts`): about once an hour per space, and only when
+ * something changed, one quiet turn in the owner's own session that follows the `rig-gardener`
+ * skill. Only the owner's app on the Mac they used last runs it.
+ */
+export function wireGardener(): void {
+  const file = createFileGardenerStore(join(app.getPath('userData'), 'rig-gardener.json'));
+  // What the record says about the last look also goes to the space's state, for the pill.
+  const tell = (id: string, record: { lastStartedMs: number | null; lastFinishedMs: number | null }) =>
+    spaceState.checked(id, { lastStartedAt: record.lastStartedMs, lastFinishedAt: record.lastFinishedMs });
+  const store: typeof file = {
+    get(id) {
+      const record = file.get(id);
+      if (record) tell(id, record);
+      return record;
+    },
+    set(id, record) {
+      file.set(id, record);
+      tell(id, record);
+    },
+  };
+  const gardener = createGardener({
+    enabled: () => rigSettingsStore.get().alphaEnabled && spacesDispatchController.isRunning(),
+    me: async () => {
+      const me = await relayApi.whoami();
+      return me.success ? me.data.id : null;
+    },
+    elsewhere: () => activeMac.usingAnotherMac(),
+    spaces: async () => {
+      const workspaces = await rigAccountController.workspaces();
+      if (!workspaces.success) return [];
+      const spaces = workspaces.data.filter((b) => b.kind === 'space');
+      const paths = await resolveLocalPathsImpl(spaces.map((b) => b.id));
+      return spaces.flatMap((b) => (paths[b.id] ? [{ bindingId: b.id, path: paths[b.id]!, name: b.name, role: b.role }] : []));
+    },
+    busy: (bindingId, userId) => spacesDispatchController.currentRunId(bindingId, userId, 'claude') !== null,
+    lastTurnAt: (bindingId, userId) => spaceSessionStore().get(`${bindingId}::${userId}::claude`)?.lastTurnAt ?? null,
+    fingerprint: async (path) => {
+      const files = await listSpaceFiles(path);
+      return files ? spaceFingerprint(files) : null;
+    },
+    facts: async ({ bindingId, path }) => {
+      // Rig runs its own check here so the turn never stops on an approval for a shell command.
+      const outcome = await runRig(['doctor', '--json'], path, 20_000).catch(() => null);
+      const doctor = outcome?.kind === 'ran' && outcome.stdout.trim() ? cutFacts(outcome.stdout.trim()) : null;
+      return { views: cutFacts(JSON.stringify(spaceState.get(bindingId).views)), doctor };
+    },
+    run: async ({ bindingId, userId, context, mayRename }) => {
+      log.info('Rig gardener: looking over a space', { bindingId });
+      const started = await spacesDispatchController.runLocal({
+        bindingId,
+        ownerUserId: userId,
+        agent: 'claude',
+        prompt: GARDENER_PROMPT,
+        extraHiddenContext: context,
+        startedBy: 'gardener',
+        quietCard: { silentAnswer: GARDENER_SILENT_REPLY },
+        renameOnce: mayRename,
+      });
+      return started && started.success ? { done: started.data.done } : null;
+    },
+    store,
+    now: () => Date.now(),
+  });
+  setInterval(() => void gardener.tick().catch((error) => log.warn('Rig gardener: tick failed', { error: String(error) })), GARDENER_TICK_MS).unref?.();
+}
+
+/**
+ * This Mac's own runtime facts about a space's standing work and turns (`space-state/`). Not
+ * `spaceStatus`, which is Home's poll of the relay. Looks at the space's views first so the
+ * schedule is current even when the clock has not ticked since the view changed.
+ */
+export const rigSpaceStateController = createRPCController({
+  /** Every space's standing work and turns as this Mac knows them, for Home's list of spaces. */
+  all: async (): Promise<SpaceState[]> => (rigSettingsStore.get().alphaEnabled ? spaceState.all() : []),
+  get: async ({ bindingId }: { bindingId: string }): Promise<SpaceState> => {
+    if (!rigSettingsStore.get().alphaEnabled) return { bindingId, at: Date.now(), views: [], runs: [] };
+    try {
+      const path = (await resolveLocalPathsImpl([bindingId]))[bindingId];
+      if (path && refresher) await refresher.look({ bindingId, path });
+    } catch {
+      // The facts we already have are still true.
+    }
+    return spaceState.get(bindingId);
+  },
+});
+
+/**
+ * "Run now" on a scheduled view: the same pass its schedule starts, started by the person. It is
+ * their own act, so the Room shows it as a press ("Drafts to review · Run now").
+ */
+async function runViewNow(spec: { bindingId: string; view: string }): Promise<Result<{ runId: string }, string>> {
+  if (!rigSettingsStore.get().alphaEnabled) return err('Views are part of Rig Alpha.');
+  if (!isViewName(spec.view)) return err('Not a view.');
+  if (!spacesDispatchController.isRunning()) return err('Spaces is not running.');
+  const me = await rigAccountController.me();
+  if (!me.success) return err(me.error.message);
+  const path = (await resolveLocalPathsImpl([spec.bindingId]))[spec.bindingId];
+  if (!path) return err("This space's folder isn't on this Mac.");
+  const view = (await readSpaceViews(path)).find((v) => v.name === spec.view);
+  const schedule = view?.meta ? parseViewSchedule(view.meta) : null;
+  if (!view || !schedule) return err('That view has no schedule to run.');
+  if (spacesDispatchController.currentRunId(spec.bindingId, me.data.id, 'claude') !== null) {
+    return err('Your Claude is working on something here. Run it again once that is done.');
+  }
+  log.info('Rig views: run now', { bindingId: spec.bindingId, view: spec.view });
+  const started = await spacesDispatchController.runLocal({
+    bindingId: spec.bindingId,
+    ownerUserId: me.data.id,
+    agent: 'claude',
+    prompt: viewRefreshPrompt(spec.view, schedule),
+    extraHiddenContext: viewTurnContext(spec.view),
+    view: spec.view,
+    startedBy: 'view',
+    pressed: { label: 'Run now' },
+  });
+  if (!started) return err('Spaces is not running.');
+  if (!started.success) return err(started.error);
+  // Running it themselves is the person agreeing to this schedule as it stands.
+  refresher?.accept(spec.bindingId, spec.view, schedule);
+  // The person's own pass moves the schedule like the clock's would, and is the view's last refresh.
+  refresher?.started(spec.bindingId, spec.view);
+  spaceState.refreshStarted(spec.bindingId, spec.view, started.data.runId);
+  return ok({ runId: started.data.runId });
+}
+
+/**
+ * The person agrees to a view's schedule that someone else set or changed: from then on it runs in
+ * their session like one they set themselves. Only for a schedule that names them.
+ */
+async function acceptViewSchedule(spec: { bindingId: string; view: string }): Promise<Result<{ accepted: true }, string>> {
+  if (!rigSettingsStore.get().alphaEnabled) return err('Views are part of Rig Alpha.');
+  if (!isViewName(spec.view)) return err('Not a view.');
+  const me = await rigAccountController.me();
+  if (!me.success) return err(me.error.message);
+  const path = (await resolveLocalPathsImpl([spec.bindingId]))[spec.bindingId];
+  if (!path) return err("This space's folder isn't on this Mac.");
+  const view = (await readSpaceViews(path)).find((v) => v.name === spec.view);
+  const schedule = view?.meta ? parseViewSchedule(view.meta) : null;
+  if (!view || !schedule) return err('That view has no schedule to accept.');
+  if (schedule.runsAs !== me.data.id) return err('That schedule runs in another member\'s Rig app, not yours.');
+  if (!refresher) return err('Spaces is not running.');
+  log.info('Rig views: schedule accepted', { bindingId: spec.bindingId, view: spec.view });
+  refresher.accept(spec.bindingId, spec.view, schedule);
+  await refresher.look({ bindingId: spec.bindingId, path });
+  return ok({ accepted: true });
+}
+
 /** The renderer-facing half: the Room's session card Stop button and owner approvals. */
 export const rigSpacesDispatchController = createRPCController({
+  viewAct: runViewAct,
+  viewActDone,
+  runViewNow,
+  acceptViewSchedule,
   stopRun: async ({ runId, bindingId }: { runId: string; bindingId?: string }): Promise<{ stopped: boolean }> => ({
     stopped: await spacesDispatchController.stopRun(runId, bindingId),
   }),
+  /** `/new` in the Room: your sessions in this space are set aside, so your next message starts a new conversation. */
+  newSession: async ({ bindingId }: { bindingId: string }): Promise<Result<{ count: number }, string>> => {
+    const me = await relayApi.whoami();
+    if (!me.success) return err(me.error.message);
+    return ok({ count: spacesDispatchController.startOver(bindingId, me.data.id) });
+  },
+  /** The Room's recent conversation as lines for an agent's context: what a side chat starts from. */
+  roomContext: async ({ bindingId }: { bindingId: string }): Promise<Result<{ lines: string[] }, string>> => {
+    const context = await roomContextLines(relayApi, { bindingId, sourceMessageId: '' }, '', null).catch(
+      () => null
+    );
+    return context ? ok({ lines: context.lines }) : err('The Room could not be read.');
+  },
+  /** `/stop` in the Room: your agents' turns in this space are stopped; a session that does not answer is set aside. */
+  stopAll: async ({ bindingId }: { bindingId: string }): Promise<Result<{ count: number }, string>> => {
+    const me = await relayApi.whoami();
+    if (!me.success) return err(me.error.message);
+    return ok({ count: await spacesDispatchController.stopAll(bindingId, me.data.id) });
+  },
+  /** `/status` in the Room: your sessions in this space. */
+  sessionStatus: async ({ bindingId }: { bindingId: string }): Promise<Result<SpaceSessionStatus[], string>> => {
+    const me = await relayApi.whoami();
+    if (!me.success) return err(me.error.message);
+    return ok(spacesDispatchController.sessionStatus(bindingId, me.data.id));
+  },
   /** Your agent's settings in this space; reaches its session, so only call it when a selector opens. */
   agentConfig: async ({
     bindingId,

@@ -662,7 +662,7 @@ function JustYouHeading({ count }: { count: number }) {
   );
 }
 
-const MINE_MATRIX: Record<MySession['state'], DotMatrixState> = {
+export const MINE_MATRIX: Record<MySession['state'], DotMatrixState> = {
   waiting: 'waiting',
   working: 'thinking',
   done: 'done',

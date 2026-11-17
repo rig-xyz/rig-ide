@@ -12,7 +12,7 @@
 import type { MessageAttachment } from '@shared/rig/attachments';
 import type { ConnectionState, ConnectorGap, RigToolArgs } from '@shared/spaces/connectors';
 import type { RunSummary } from '@shared/spaces/room-cache';
-import type { RoomSees } from '@shared/spaces/room-sees';
+import type { RoomSees, RunTrigger } from '@shared/spaces/room-sees';
 import type { MessageReaction } from '@shared/spaces/reactions';
 import type { ThemeEvent, ThemesSnapshotWire } from '@shared/spaces/themes';
 import type { RoomThemes } from './themes';
@@ -69,6 +69,8 @@ export interface RoomSkill {
 // ────────── session projection (ported from the spike's session-log/lib.ts) ──────────
 
 export interface SessionStep {
+  /** What the step is for, in the agent's own words (a command's `description`), when it gave one. */
+  description?: string;
   toolCallId: string;
   kind?: string;
   title?: string;
@@ -130,7 +132,13 @@ export interface SessionCard {
   model: string | null;
   /** Why the run failed, when it says. */
   failureReason: string | null;
-  currentStep: { toolCallId: string; title?: string; kind?: string; args?: RigToolArgs } | null;
+  currentStep: {
+    toolCallId: string;
+    title?: string;
+    description?: string;
+    kind?: string;
+    args?: RigToolArgs;
+  } | null;
   outputs: SessionOutput[];
   steps: SessionStep[];
   finalAnswer: string;
@@ -149,6 +157,8 @@ export interface SessionCard {
   connectorGaps: ConnectorGap[];
   /** The "Room sees" level the run ran at (`run_privacy`); null for a run from before the setting. */
   privacy: RoomSees | null;
+  /** What started the run when nobody typed a message for it: a press in a view, its schedule, Rig's own look. */
+  trigger: RunTrigger | null;
   /** Steps the room was only told the number of (`private_progress`, or `details_hidden`). */
   privateSteps: number;
   /** Its owner hid its details after the fact: the room now sees only the answer. */

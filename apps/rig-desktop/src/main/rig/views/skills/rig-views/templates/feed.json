@@ -1,0 +1,18 @@
+{
+  "factory": "Content factory · sources",
+  "tab": { "sub": "2 since yesterday" },
+  "read_at": "2026-11-12T16:10:00Z",
+  "since": "2026-11-11T16:10:00Z",
+  "rig": { "summary": "Four things since yesterday. Sam's note on the sync fix is the one worth a post; the rest is internal." },
+  "sources": [ { "name": "Slack", "ok": true }, { "name": "Linear", "ok": false, "last_ok": "2026-11-12T09:00:00Z" } ],
+  "entries": [
+    { "id": "e1", "who": "Sam", "source": "Slack", "where": "#bug-bash", "url": "https://example.com/slack/1", "at": "2026-11-12T15:20:00Z",
+      "text": "Sync fix is in. The event count no longer jumps after Sync now.", "made": "drafted", "made_note": "One draft in the review queue" },
+    { "id": "e2", "who": "Lena", "source": "Slack", "where": "#support", "url": "https://example.com/slack/2", "at": "2026-11-12T11:02:00Z",
+      "text": "Customer asks whether bookings work on weekends.", "made": "skipped", "made_note": "Support, not a post" },
+    { "id": "e3", "who": "Noor", "source": "Slack", "where": "#bug-bash", "url": "https://example.com/slack/3", "at": "2026-11-12T10:30:00Z",
+      "text": "Pending invite fix is up as #370.\nThe sent-or-not message now shows before the retry.", "made": "linked", "made_note": "APP-598" },
+    { "id": "e4", "who": "Theo", "source": "Slack", "where": "#bug-bash", "url": "https://example.com/slack/4", "at": "2026-11-11T18:45:00Z",
+      "text": "Should the pricing post wait for the site change?", "made": "asked", "made_note": "Waiting on you" }
+  ]
+}

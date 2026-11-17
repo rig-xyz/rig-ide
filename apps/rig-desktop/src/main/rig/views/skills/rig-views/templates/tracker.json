@@ -1,0 +1,24 @@
+{
+  "source": "Linear · Bug bash 2.3.0",
+  "title": "Where the bug bash stands",
+  "tab": { "sub": "4 open · 2 for you", "count": 2 },
+  "read_at": "2026-11-12T16:10:00Z",
+  "rig": { "summary": "Three of the five sync bugs share one cause; #371 fixes it and is ready for your review. Two reports still have no owner, and one of them is probably the same bug." },
+  "items": [
+    { "id": "APP-570", "url": "https://example.com/APP-570", "title": "Booking ignores rooms held in Drafts", "priority": "High", "status": "in_progress",
+      "owner_id": "usr_sam", "owner_name": "Sam", "waits_on_id": "usr_abc123", "changed_at": "2026-11-12T15:00:00Z",
+      "rig_note": "Fixed by #371, checks green",
+      "ask": { "body": "#371 fixes it and the checks are green. Review it, then it can merge.", "context": "ready for review",
+        "actions": [{ "act": "review", "label": "Review #371", "primary": true }, { "act": "ask-author", "label": "Ask Sam a question" }, { "act": "skip", "label": "Skip for now" }] } },
+    { "id": "APP-620", "url": "https://example.com/APP-620", "title": "Event card and detail show different start times", "priority": "Medium", "status": "backlog",
+      "owner_id": null, "owner_name": null, "changed_at": "2026-11-12T10:40:00Z", "rig_note": "From Slack this morning" },
+    { "id": "APP-605", "url": "https://example.com/APP-605", "title": "Week view shows no events with 12 on the server", "priority": "High", "status": "backlog",
+      "owner_id": null, "owner_name": null, "changed_at": "2026-11-12T09:12:00Z", "rig_note": "Same cause as APP-570, probably",
+      "ask": { "body": "Probably the same cause as APP-570. Give it to Sam, who is already in that code.", "context": "reported yesterday, no owner",
+        "actions": [{ "act": "assign-pete", "label": "Give it to Sam", "primary": true }, { "act": "assign-riyad", "label": "Give it to Noor" }, { "act": "wait", "label": "Wait for #371 first" }] } },
+    { "id": "APP-598", "url": "https://example.com/APP-598", "title": "Calendar invite shows pending, then disappears", "priority": "High", "status": "in_progress",
+      "owner_id": "usr_riyad", "owner_name": "Noor", "changed_at": "2026-11-12T13:30:00Z", "rig_note": "Fix in #370, one comment open" },
+    { "id": "APP-580", "url": "https://example.com/APP-580", "title": "Assistant suggests the wrong rooms", "priority": "Medium", "status": "done",
+      "owner_id": "usr_abc123", "owner_name": "Dylan", "changed_at": "2026-10-30T10:00:00Z" }
+  ]
+}

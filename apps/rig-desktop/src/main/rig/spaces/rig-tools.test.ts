@@ -1,5 +1,6 @@
 import { err, ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
+import { applyHomeLayoutAction, DEFAULT_HOME_LAYOUT, type HomeLayout } from '@shared/rig/home-layout';
 import type { RigCommentMessage } from '@shared/rig/comments';
 import type { RigFileNode } from '@shared/rig/files';
 import type { AcpPermissionRequest } from '@emdash/core/acp';
@@ -198,7 +199,7 @@ async function call(backend: RigToolsBackend, name: string, input: Record<string
 }
 
 describe('rig tools', () => {
-  it('are the seventeen tools, each saying when to use it', () => {
+  it('are the eighteen tools, each saying when to use it', () => {
     const tools = createRigTools(fakeBackend());
     expect(tools.map((t) => t.name)).toEqual([
       'rig_space_describe',
@@ -217,6 +218,7 @@ describe('rig tools', () => {
       'rig_query',
       'rig_get',
       'rig_act',
+      'rig_nav',
       'rig_start',
     ]);
     for (const t of tools) expect(t.description).toMatch(/Use it when|Use it whenever/);
@@ -1376,6 +1378,64 @@ describe('the four primitives', () => {
     expect(res.text).toBe('feed (2):\n1. Choose the vendor list [sit_1] · decision: ask_you 0.92\n2. Send Maya the data [sit_2]');
     expect(query).toHaveBeenCalledWith({ kind: 'feed', filter: { needs: 'me' }, since: undefined, limit: undefined });
     expect((await call(backend, 'rig_query', { kind: 'usage' })).text).toMatch(/^Not available yet/);
+  });
+
+  describe('rig_nav', () => {
+    const HOME: RigToolScope = { ...SCOPE, bindingId: HOME_BINDING, cwd: '/home-chat' };
+    function nav() {
+      let layout: HomeLayout = { ...DEFAULT_HOME_LAYOUT, groups: [{ id: 'g1', name: 'Acme', collapsed: false, spaces: ['b1'] }] };
+      const renameSpace = vi.fn(async (_id: string, _root: string, name: string) => ok({ name }));
+      const backend = fakeBackend({
+        renameSpace,
+        listMembers: async () => ok([{ userId: 'u-dylan', role: 'owner' }] as never),
+        homeNav: {
+          layout: async () => layout,
+          apply: async (action) => (layout = applyHomeLayoutAction(layout, action)),
+          spaces: async () =>
+            ok([
+              { bindingId: 'b1', name: 'bug fixes', root: '/rigs/b1' },
+              { bindingId: 'b2', name: 'x posts', root: '/rigs/b2' },
+              { bindingId: 'b3', name: 'elsewhere', root: null },
+            ]),
+        },
+      });
+      const run = (input: Record<string, unknown>) => runRigTool(backend, tool(backend, 'rig_nav'), HOME, input);
+      return { run, backend, renameSpace, layout: () => layout };
+    }
+
+    it('lists the groups with their spaces by name', async () => {
+      expect((await nav().run({ action: 'list' })).text).toBe('Acme: #bug fixes\nUngrouped: #x posts, #elsewhere');
+    });
+
+    it('makes a group, moves spaces into it and out again, renames and removes it', async () => {
+      const n = nav();
+      expect((await n.run({ action: 'create_group', name: 'Content', spaces: ['space_b2'] })).text).toContain('Content: #x posts');
+      expect((await n.run({ action: 'create_group', name: 'content' })).isError).toBe(true);
+      expect((await n.run({ action: 'move', spaces: ['space_b1'], group: 'Content' })).text).toContain('Content: #x posts, #bug fixes');
+      expect((await n.run({ action: 'move', spaces: ['space_b1'] })).text).toContain('Ungrouped: #bug fixes');
+      expect((await n.run({ action: 'rename_group', group: 'content', name: 'Writing' })).text).toContain('Writing: #x posts');
+      await n.run({ action: 'delete_group', group: 'Writing' });
+      expect(n.layout().groups.map((g) => g.name)).toEqual(['Acme']);
+    });
+
+    it('refuses a space or a group it cannot find', async () => {
+      const n = nav();
+      expect((await n.run({ action: 'move', spaces: ['space_nope'], group: 'Acme' })).isError).toBe(true);
+      expect((await n.run({ action: 'move', spaces: ['space_b2'], group: 'Missing' })).isError).toBe(true);
+    });
+
+    it('renames a space on this Mac for an owner, and not one that is elsewhere', async () => {
+      const n = nav();
+      expect((await n.run({ action: 'rename_space', spaces: ['space_b2'], name: 'X posts' })).text).toContain('Renamed #x posts to "X posts"');
+      expect(n.renameSpace).toHaveBeenCalledWith('b2', '/rigs/b2', 'X posts');
+      expect((await n.run({ action: 'rename_space', spaces: ['space_b3'], name: 'Here' })).isError).toBe(true);
+    });
+
+    it('is only for Home', async () => {
+      const n = nav();
+      const res = await runRigTool(n.backend, tool(n.backend, 'rig_nav'), SCOPE, { action: 'list' });
+      expect(res.isError).toBe(true);
+    });
   });
 
   it('rig_act passes the refs, the agent and the reason, and says how to undo or that a click is needed', async () => {

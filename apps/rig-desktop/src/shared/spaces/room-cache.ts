@@ -32,6 +32,16 @@ export const runSummarySchema = z.object({
   lastSeq: z.number(),
   /** A run that ended with only reactions: its card's "Claude reacted 👍". Optional, so older blobs still load. */
   reacted: z.array(z.string()).optional(),
+  /** What started a run nobody typed a message for (`RunTrigger`). Optional, so older blobs still load. */
+  trigger: z
+    .object({
+      by: z.enum(['view', 'clock', 'gardener']),
+      view: z.string().optional(),
+      label: z.string().optional(),
+      item: z.string().optional(),
+      note: z.string().optional(),
+    })
+    .optional(),
 });
 export type RunSummary = z.infer<typeof runSummarySchema>;
 

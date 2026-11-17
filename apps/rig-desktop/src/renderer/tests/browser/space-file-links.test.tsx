@@ -48,6 +48,8 @@ const settle = (ms = 50) => act(async () => new Promise((resolve) => setTimeout(
 let host: HTMLDivElement;
 let root: Root;
 let present: Set<string>;
+/** What the relay's file list holds; null when it can't be reached. */
+let relay: Set<string> | null;
 let opened: string[];
 
 // Presence checks are shared per space and file for a moment: each test is its own space.
@@ -58,8 +60,13 @@ function space(): AttachmentSpace {
     spaceRoot: '/Users/me/Rig/clear-harbor',
     selfUserId: 'usr_me',
     onOpenFile: (relPath) => opened.push(relPath),
-    status: async (files) =>
-      files.map((f): AttachmentFileStatus => ({ path: f.path, exists: present.has(f.path), synced: null, onRelay: null })),
+    status: async (files, withRelay) =>
+      files.map((f): AttachmentFileStatus => ({
+        path: f.path,
+        exists: present.has(f.path),
+        synced: null,
+        onRelay: withRelay && relay ? relay.has(f.path) : null,
+      })),
     thumbnail: async () => null,
     reveal: () => {},
     copyText: () => {},
@@ -71,6 +78,7 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
   present = new Set();
+  relay = null;
   opened = [];
   spaceN += 1;
   mocks.toast.mockReset();
@@ -134,6 +142,31 @@ describe('file links in an agent answer', () => {
     await act(async () => first().click());
     expect(onOpen).toHaveBeenCalledTimes(1);
   }, 10_000);
+
+  it('shows a file nobody has as plain text, and links it once it exists', async () => {
+    present = new Set(['bugs-0.4.5.md', 'rig-wishlist.md']);
+    relay = new Set(['bugs-0.4.5.md', 'rig-wishlist.md']);
+    await renderAnswer(vi.fn());
+    await settle();
+    const plain = host.querySelector('[data-testid="space-file-nowhere"]');
+    expect(plain?.textContent).toBe('release-notes-0.4.5.md');
+    expect(host.querySelectorAll('[data-testid="space-file-link"]')).toHaveLength(2);
+    expect(host.querySelector('[aria-label="Not on this computer yet"]')).toBeNull();
+
+    present.add('release-notes-0.4.5.md');
+    await settle(4500);
+    expect(host.querySelector('[data-testid="space-file-nowhere"]')).toBeNull();
+    expect(host.querySelectorAll('[data-testid="space-file-link"]')).toHaveLength(3);
+  }, 10_000);
+
+  it('keeps saying a file is on its way when the relay has it', async () => {
+    present = new Set(['bugs-0.4.5.md', 'rig-wishlist.md']);
+    relay = new Set(['release-notes-0.4.5.md']);
+    await renderAnswer(vi.fn());
+    await settle();
+    expect(host.querySelector('[data-testid="space-file-nowhere"]')).toBeNull();
+    expect((host.querySelector('[data-testid="space-file-link"]') as HTMLElement).dataset.missing).toBe('true');
+  });
 
   it('leaves a bare path outside the space as plain text', async () => {
     await act(async () =>

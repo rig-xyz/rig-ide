@@ -1,0 +1,107 @@
+<!doctype html>
+<!-- PRs in flight, grouped by who they wait on. The groups are the point: the first one is what to do next.
+     Data shape: templates/prs.json. Each PR carries facts (checks, reviews) and Rig's one-line status; which group
+     it falls in is worked out here from `waits_on`, so a refresh only rewrites facts.
+
+     A PR that waits on the viewer and has been looked at carries `ask` and is shown as a decision card at the top, under
+     the note. Only PRs that merely inform (not looked at yet, nothing to decide, drafts) are rows with a state pill.
+
+     A row is five cells: repo#n, title with a meta line, checks, reviews, status pill. Under 760px it stacks. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRs in flight</title>
+<link rel="stylesheet" href="../_rig/rig.css">
+<script src="../_rig/rig-view.js"></script>
+<script>
+document.addEventListener('click', (e) => {
+  const open = e.target.closest('[data-open]');
+  if (open) { state.open[open.dataset.open] = true; rig.rerender(); }
+});
+</script>
+<style>
+  .pr { --row: 230px minmax(0, 1fr) 56px 150px 118px; }
+  /* Identifiers are never cut: a long repo name wraps at any point instead of ending in an ellipsis. */
+  .pr .rv-id { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+  .pr .ci { font: 400 12px var(--mono); }
+  .pr .ci.ok { color: var(--ok); } .pr .ci.bad { color: var(--bad); }
+  .pr .status { justify-self: end; }
+  /* Narrow: id and status on one line, then the title, then checks and reviews side by side. */
+  @media (max-width: 760px) {
+    .pr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id status" "title title" "ci rev"; gap: 6px 10px; }
+    .pr .rv-id { grid-area: id; } .pr .rv-stack { grid-area: title; } .pr .ci { grid-area: ci; } .pr .rev { grid-area: rev; } .pr .status { grid-area: status; }
+  }
+</style>
+</head>
+<body>
+<main class="rv-page" id="root"></main>
+<script>
+const { h, card, note, pill, ago, state } = rig;
+state.open ??= {};
+
+// Order matters: what waits on the viewer first, then the rest. dot = the .rv-dot tone.
+// A PR with `ask` is a card, not a row; the groups below only hold the rows.
+const GROUPS = [
+  ['ready', 'Ready to merge', 'ok'],
+  ['you', 'Not looked at yet', 'warn'],
+  ['yours', 'Yours, waiting on others', 'accent'],
+  ['others', 'Others', ''],
+];
+
+const row = (p) => h`
+  <div class="rv-row pr" data-key="pr-${p.id}">
+    <span class="rv-id">${p.url ? h`<a href="${p.url}">${p.id}</a>` : p.id}</span>
+    <span class="rv-stack">
+      <span class="rv-row-title">${p.title}</span>
+      <span class="rv-row-meta">${p.author}${p.fixes ? ` · fixes ${p.fixes}` : ''} · +${p.add} −${p.del} · ${ago(p.updated_at)}</span>
+    </span>
+    <span class="ci ${p.checks.failed ? 'bad' : 'ok'}">${p.checks.passed}/${p.checks.total} ${p.checks.failed ? '✗' : '✓'}</span>
+    <span class="rv-small rev">${p.reviews}</span>
+    <span class="status">${pill(p.status.label, p.status.tone)}</span>
+  </div>`;
+
+// The card id is the PR (repo#n), so the session that gets the click knows which one.
+const decision = (p) => card({
+  id: p.id,
+  label: p.ask.label || `Review · ${p.id}`,
+  body: p.ask.verdict,                       // the verdict in one or two sentences
+  why: h`<a href="${p.url}">${p.title}</a> · ${p.author} · ${p.checks.passed}/${p.checks.total} checks${p.ask.context ? ` · ${p.ask.context}` : ''}`,
+  note: 'Change something first (optional)',
+  actions: p.ask.actions,                    // the proposal first and primary, then real alternatives
+});
+
+rig.mount((d) => {
+  const asks = d.prs.filter((p) => p.ask && p.waits_on !== 'others');
+  const rows = d.prs.filter((p) => !asks.includes(p));
+  const groups = GROUPS.map(([key, name, dot]) => ({ key, name, dot, prs: rows.filter((p) => p.waits_on === key) })).filter((g) => g.prs.length);
+  return h`
+  <header class="rv-head"><div>
+    <span class="rv-eyebrow">${d.source}</span>
+    <h1 class="rv-title">PRs in flight</h1>
+    <span class="rv-meta" data-key="meta">${d.prs.length} open · grouped by who they wait on · read ${ago(d.read_at)}</span>
+  </div></header>
+
+  ${note(d.rig && d.rig.summary)}
+
+  ${asks.length ? h`
+    <section class="rv-stack" style="gap:6px" data-key="asks">
+      <h2 class="rv-sec"><span class="rv-dot warn"></span>Waiting on you<span class="n">${asks.length}</span></h2>
+      <div class="rv-list">${(state.open.asks ? asks : asks.slice(0, 5)).map(decision)}</div>
+      ${asks.length > 5 && !state.open.asks ? h`<div><button class="rv-btn quiet sm" data-open="asks">Show the other ${asks.length - 5}</button></div>` : ''}
+    </section>` : ''}
+
+  ${groups.length ? groups.map((g) => h`
+    <section class="rv-stack" style="gap:6px" data-key="group-${g.key}">
+      <h2 class="rv-sec"><span class="rv-dot ${g.dot}"></span>${g.name}<span class="n">${g.prs.length}</span></h2>
+      <div class="rv-panel"><div class="rv-rows">${g.prs.map(row)}</div></div>
+    </section>`)
+  : asks.length ? '' : h`<div class="rv-empty"><b>No open PRs</b>They appear here as soon as one is opened for this work.</div>`}`;
+});
+document.addEventListener('click', (e) => {
+  const open = e.target.closest('[data-open]');
+  if (open) { state.open[open.dataset.open] = true; rig.rerender(); }
+});
+</script>
+</body>
+</html>

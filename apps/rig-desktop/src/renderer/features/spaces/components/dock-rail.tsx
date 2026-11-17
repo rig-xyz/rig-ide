@@ -95,7 +95,7 @@ function Halo({ square = false }: { square?: boolean }) {
 const GREYED = 'opacity-45 grayscale';
 
 /** "+N": the people or agents that did not fit, a small chip that opens the pinned panel. */
-function MoreChip({
+export function MoreChip({
   count,
   label,
   testId,
@@ -164,21 +164,27 @@ function faceProps(who: DockWho, faces: FaceHandlers) {
   };
 }
 
-function Members({
+export function Members({
   snapshot,
   selfUserId,
   faces,
   onMore,
+  vertical = false,
 }: {
   snapshot: RoomSnapshot;
   selfUserId: string;
   faces: FaceHandlers;
   onMore: (() => void) | undefined;
+  /** Stacked top to bottom (the pill down the Room's right edge): names come out to the left. */
+  vertical?: boolean;
 }) {
   const { shown, more } = railMembers(snapshot, selfUserId);
   if (shown.length === 0) return null;
   return (
-    <span className="flex items-center gap-[5px]" data-testid="dock-members">
+    <span
+      className={cn('flex items-center gap-[5px]', vertical && 'flex-col')}
+      data-testid="dock-members"
+    >
       {shown.map((entry) => {
         const { member, present, typing } = entry;
         const who: DockWho = { kind: 'person', userId: member.id };
@@ -195,7 +201,8 @@ function Members({
                   type="button"
                   aria-label={memberLabel(entry)}
                   className={cn(
-                    'relative inline-flex rounded-full transition-transform hover:-translate-y-0.5',
+                    'relative inline-flex rounded-full transition-transform',
+                    vertical ? 'hover:-translate-x-0.5' : 'hover:-translate-y-0.5',
                     FOCUS_RING
                   )}
                   data-testid="dock-member"
@@ -216,7 +223,7 @@ function Members({
                 </button>
               }
             />
-            <TooltipContent side="bottom">
+            <TooltipContent side={vertical ? 'left' : 'bottom'}>
               {selected ? `${state}. Click to show everyone.` : `${state}. Click to filter.`}
             </TooltipContent>
           </Tooltip>
@@ -278,13 +285,14 @@ function ApprovalsBadge({
   );
 }
 
-function AgentTile({
+export function AgentTile({
   railAgent,
   snapshot,
   pending,
   open,
   faces,
   onToggleApprovals,
+  vertical = false,
 }: {
   railAgent: RailAgent;
   snapshot: RoomSnapshot;
@@ -292,6 +300,8 @@ function AgentTile({
   open: boolean;
   faces: FaceHandlers;
   onToggleApprovals: () => void;
+  /** Stacked top to bottom (the pill down the Room's right edge): its name comes out to the left. */
+  vertical?: boolean;
 }) {
   const owner = snapshot.members.find((m) => m.id === railAgent.owner);
   const ownerName = railAgent.own ? null : personOf(snapshot, railAgent.owner).name;
@@ -327,7 +337,8 @@ function AgentTile({
               data-owner={railAgent.owner}
               data-state={railAgent.active ? 'active' : 'idle'}
               className={cn(
-                'relative inline-flex rounded-card transition-transform hover:-translate-y-0.5',
+                'relative inline-flex rounded-card transition-transform',
+                vertical ? 'hover:-translate-x-0.5' : 'hover:-translate-y-0.5',
                 FOCUS_RING
               )}
               {...faceProps(who, faces)}
@@ -350,7 +361,7 @@ function AgentTile({
             </button>
           }
         />
-        <TooltipContent side="bottom">
+        <TooltipContent side={vertical ? 'left' : 'bottom'}>
           {selected ? `${label}. Click to show everyone.` : `${label}. Click to filter.`}
         </TooltipContent>
       </Tooltip>

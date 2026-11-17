@@ -10,7 +10,8 @@ type ToastAction = {
 
 type Toast = {
   title?: string;
-  description?: string;
+  /** Words under the title; a node when it needs more than one line. */
+  description?: ReactNode;
   variant?: 'default' | 'destructive';
   action?: ToastAction;
   /** A quiet second button beside `action`, e.g. "Later". */

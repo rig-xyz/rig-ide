@@ -58,6 +58,10 @@ export function SpaceFileLink({
   let label: ReactNode = children;
   if (file.relPath && pathText) label = code ? <code>{file.relPath}</code> : file.relPath;
 
+  // Nobody has this file (an agent named one it has not made): plain text, not a link that waits
+  // for a sync that will never come. It becomes a link if the file appears.
+  if (file.nowhere) return <span data-testid="space-file-nowhere">{label}</span>;
+
   const missing = file.relPath !== null && file.present === false;
   return (
     <a

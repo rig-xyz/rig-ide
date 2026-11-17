@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideSend, routeFromPreview, type ComposerRoute } from './send-decision';
+import { decideSend, routeFromPreview, soloAgent, type ComposerRoute } from './send-decision';
 
 const base = {
   text: 'can you look at the churn numbers',
@@ -128,5 +128,46 @@ describe('routeFromPreview', () => {
       action: 'none',
       agent: null,
     });
+  });
+});
+
+describe('soloAgent', () => {
+  it('is the one agent, else Claude, else nothing', () => {
+    expect(soloAgent({ people: 1, runnable: ['codex'] })).toBe('codex');
+    expect(soloAgent({ people: 1, runnable: ['claude'] })).toBe('claude');
+    expect(soloAgent({ people: 1, runnable: ['claude', 'codex'] })).toBe('claude');
+    expect(soloAgent({ people: 1, runnable: [] })).toBeNull();
+  });
+  it('is nothing unless you are the only person', () => {
+    expect(soloAgent({ people: 2, runnable: ['claude'] })).toBeNull();
+    expect(soloAgent({ people: 1, invited: 1, runnable: ['claude'] })).toBeNull();
+    expect(soloAgent({ people: 1, invited: 0, runnable: ['claude'] })).toBe('claude');
+    expect(soloAgent({ people: 0, runnable: ['claude'] })).toBeNull();
+  });
+});
+
+describe('decideSend alone with your agent', () => {
+  const solo = { ...base, solo: 'claude' as const };
+  it('asks the agent for a plain message', () => {
+    expect(decideSend(solo)).toEqual({ label: 'Ask Claude', mode: 'ask', agent: 'claude', meta: {} });
+  });
+  it('lets a tag of another of your agents win', () => {
+    expect(decideSend({ ...solo, tagged: 'codex' })).toMatchObject({ agent: 'codex' });
+  });
+  it("lets the menu's Send win, marked route none", () => {
+    expect(decideSend({ ...solo, override: { kind: 'send' } })).toEqual({ label: 'Send', mode: 'send', agent: null, meta: { route: 'none' } });
+  });
+  it('lets the pill win', () => {
+    expect(decideSend({ ...solo, pill: 'codex' })).toMatchObject({ agent: 'codex' });
+  });
+  it('beats a route of none', () => {
+    expect(decideSend({ ...solo, route: none })).toMatchObject({ mode: 'ask', agent: 'claude' });
+  });
+  it('follows the unavailable and elsewhere rules', () => {
+    expect(decideSend({ ...solo, runnable: ['codex'], elsewhere: [] })).toMatchObject({ mode: 'send', unavailable: 'claude', meta: { route: 'none' } });
+    expect(decideSend({ ...solo, runnable: ['codex'], elsewhere: ['claude'] })).toMatchObject({ mode: 'ask', elsewhere: 'claude' });
+  });
+  it('null leaves a plain send plain', () => {
+    expect(decideSend({ ...base, solo: null })).toMatchObject({ mode: 'send', agent: null });
   });
 });

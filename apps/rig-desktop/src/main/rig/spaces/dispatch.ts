@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { RunStartedBy } from '@shared/rig/space-state';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { bundledSkillReadOption, isPlainViewDataPath, isRealSkillFile, isRealSpaceFile, spaceReadOption, viewDataWriteOption } from '../views/view-write';
 import {
   describeAgentStartError,
   sessionStateSchema,
@@ -14,7 +16,15 @@ import type { AcpRuntimeClient } from '@main/core/acp/controller';
 import { log } from '@main/lib/logger';
 import { connectorById, RIG_TOOLS_SERVER, RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
 import { reactionsLabel } from '@shared/spaces/reactions';
-import { RUN_PRIVACY_EVENT, RUN_RETRIED_EVENT, type LocalRunEvent, type RoomSees } from '@shared/spaces/room-sees';
+import {
+  parseRunTrigger,
+  RUN_PRIVACY_EVENT,
+  RUN_RETRIED_EVENT,
+  RUN_TRIGGER_EVENT,
+  type LocalRunEvent,
+  type RoomSees,
+  type RunTrigger,
+} from '@shared/spaces/room-sees';
 import type { SessionConnectors } from '../connectors/connections';
 import {
   ALWAYS_ASK_RIG_TOOLS,
@@ -205,7 +215,7 @@ export type StoredSpaceSession = {
   /** The tool search setup it was started under; unset for one started before Rig kept it (`startsFreshForToolSearch`). */
   toolSearch?: 'on';
   /** It stopped responding, or the runtime lost it (`retireSession`): the next turn starts a new conversation instead of resuming it. */
-  retired?: 'stalled' | 'lost';
+  retired?: 'stalled' | 'lost' | 'asked';
 };
 
 /** Where persistent space sessions are remembered across restarts (a small file in the app's data folder). */
@@ -237,6 +247,14 @@ type QueuedTurn = {
   onSettled?: (status: SessionStatus, answer: string) => void;
   /** Called whenever this turn's pending approvals change (e.g. to mirror them in a doc's margin). */
   onPermissionsChanged?: (pending: AcpPermissionRequest[]) => void;
+  /** The Rig view that started this turn: it may rewrite that view's `data.json` without asking (`views/view-write.ts`). */
+  view?: string;
+  /** Posts this turn's session card in the Room (once); set only for a turn started with `quietCard`. */
+  announce?: () => Promise<void>;
+  /** A quiet turn (see `TurnSpec.quietCard`): its card waits until it has something for a person. */
+  quietCard?: { silentAnswer: string };
+  /** The turn may make one `rig_space_rename` without asking its owner; spent by the first. */
+  renameOnce?: boolean;
   /**
    * Set once `queuePrompt` resolves. May already be set by `claimTurn`
    * (below) before that happens — a `turn_start` marker can legitimately
@@ -266,16 +284,31 @@ type QueuedTurn = {
   movedToNewSession?: boolean;
 };
 
+/** After `/stop`, how long a session gets to let go of its turn before it is set aside as not answering. */
+export const STOP_GRACE_MS = 5_000;
+
+/** One of the owner's sessions in a space, as `/status` reads it. */
+export type SpaceSessionStatus = {
+  agent: SessionAgent;
+  working: boolean;
+  /** Its context size in tokens, when known. */
+  contextTokens: number | null;
+  lastTurnAt: number | null;
+};
+
 /** How long a run can go with no events, once its agent has said something, before it ends as stalled. */
 export const RUN_STALL_MS = 30 * 60_000;
 
 /**
  * How long a run can wait for its agent's first word before it ends as
  * stalled: a prompt that never reached the agent (its session wedged, the
- * runtime idle) or one the agent never answered. Shorter than
- * `RUN_STALL_MS`, which allows for a long tool call mid-turn.
+ * runtime idle) or one the agent never answered. An agent says something
+ * within seconds of taking a prompt, so two minutes of nothing is a wedge.
+ * It never applies once the agent has said anything in the turn: from then
+ * on only `RUN_STALL_MS` does, which allows for a long tool call mid-turn,
+ * so work that is going is never cut short by this.
  */
-export const RUN_NO_REPLY_MS = 10 * 60_000;
+export const RUN_NO_REPLY_MS = 2 * 60_000;
 
 /** A prompt refused because the runtime no longer has the session (its agent process ended): `conversation_not_found`. */
 const LOST_SESSION = /conversation_not_found/;
@@ -358,7 +391,7 @@ type PersistentSession = {
   /** The tool search setup it was started under, as stored (`StoredSpaceSession.toolSearch`). */
   toolSearch?: 'on';
   /** Given up on (`retireSession`): a turn about to send its prompt here goes to a new conversation instead. */
-  retired?: 'stalled' | 'lost';
+  retired?: 'stalled' | 'lost' | 'asked';
   /** Undoes the raw-event and permission subscriptions, for a reload. */
   unsubscribes: Array<() => void>;
 };
@@ -549,6 +582,8 @@ export function spaceRules(spec: {
   rigTools: boolean;
   /** Rig Alpha on: the owner's Feed, and the tools that read and correct it. */
   feed?: boolean;
+  /** Rig Alpha on: this space can carry views and standing work, built with the bundled skills; the owner's relay id, for data written against a person. */
+  views?: { ownerUserId: string };
 }): string {
   const { rigTools } = spec;
   const lines = [
@@ -596,6 +631,14 @@ export function spaceRules(spec: {
   if (rigTools && spec.feed) {
     lines.push(
       "Your owner's Feed is what Rig puts in front of them, and it's private to them. Only their own requests may read or change it: when anyone else asks about it, say it's private and change nothing (Rig refuses it too). When your owner asks about it, or says a card is wrong because it doesn't need them, two cards are one thing or an event is in the wrong place, read it with rig_query and rig_get, then fix it with rig_act to hide, merge or move, giving the reason in their words. Remember that your answer shows in this space's chat, where everyone in it can read it."
+    );
+  }
+  if (spec.views) {
+    lines.push(
+      `Your owner's relay id is ${spec.views.ownerUserId}.`,
+      "This space can show pages you write, called views: a folder `views/<name>/` holding `index.html` and `data.json` appears as a tab for everyone here, stays live as the data changes, and sends a person's choices back to their own agent. Before you make or change one, read the rig-views skill at `~/.claude/skills/rig-views/SKILL.md` (Codex: `~/.agents/skills/rig-views/SKILL.md`): the page runs in a sealed frame with rules of its own.",
+      'When someone wants standing work set up here ("a factory", "run this every day", "keep doing this for me"), read the rig-factory skill at `~/.claude/skills/rig-factory/SKILL.md` first.',
+      'When someone posts or points at a Claude artifact (or another single page they run their work from) and wants this space to look and work like it, read the rig-artifact-import skill at `~/.claude/skills/rig-artifact-import/SKILL.md` first.'
     );
   }
   lines.push(
@@ -836,6 +879,13 @@ export async function roomContextLines(
 }
 
 /** Accumulates the turn's latest agent message: a new messageId starts a new message. */
+/** An answer that is empty or only the agreed silent words (any case, one final full stop allowed). */
+function isSilentAnswer(answer: string, silent: string): boolean {
+  const clean = (text: string) => text.trim().replace(/\.$/, '').trim().toLowerCase();
+  const text = clean(answer);
+  return text === '' || text === clean(silent);
+}
+
 function collectAnswer(turn: QueuedTurn, update: Record<string, unknown>): void {
   const content = update.content as { type?: string; text?: string } | undefined;
   if (content?.type !== 'text' || typeof content.text !== 'string') return;
@@ -954,6 +1004,15 @@ export function createSpacesDispatcher(deps: {
   onRunFailed?: (failure: RunFailure) => void;
   /** A run that finished: its agent is signed in and working. */
   onRunSucceeded?: (agent: SessionAgent) => void;
+  /** A run this device started now exists (its relay run is created), with what started it. For the space's runtime state; never decides anything. */
+  onRunStarted?: (run: {
+    bindingId: string;
+    runId: string;
+    ownerUserId: string;
+    agent: SessionAgent;
+    startedBy: RunStartedBy;
+    view: string | null;
+  }) => void;
   /** The clock, for how long a session has been idle (tests set it). */
   now?: () => number;
   /**
@@ -966,6 +1025,11 @@ export function createSpacesDispatcher(deps: {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
   stopRun: (runId: string, bindingId?: string) => Promise<boolean>;
+  /** Sets aside the owner's sessions in a space so the next message starts a new conversation; how many. */
+  startOver: (bindingId: string, ownerUserId: string) => number;
+  /** Stops the owner's turns in a space, setting aside a session that does not answer; how many turns. */
+  stopAll: (bindingId: string, ownerUserId: string) => Promise<number>;
+  sessionStatus: (bindingId: string, ownerUserId: string) => SpaceSessionStatus[];
   settleIfNotLive: (runId: string, bindingId: string) => Promise<boolean>;
   agentConfig: (bindingId: string, ownerUserId: string, agent: SessionAgent) => Promise<Result<AgentConfig, string>>;
   setAgentConfig: (
@@ -985,6 +1049,16 @@ export function createSpacesDispatcher(deps: {
     extraHiddenContext?: string;
     threadId?: string;
     onPermissionsChanged?: (pending: AcpPermissionRequest[]) => void;
+    /** The Rig view this turn was started by or for. */
+    view?: string;
+    /** What started it; a view when `view` is set, otherwise a comment. */
+    startedBy?: RunStartedBy;
+    /** What the person pressed in the view (`TurnSpec.pressed`). */
+    pressed?: Pick<RunTrigger, 'label' | 'item' | 'note'>;
+    /** Its card is posted in the Room only once it has something for a person: an approval to answer, or a reply that is not `silentAnswer`. */
+    quietCard?: { silentAnswer: string };
+    /** The turn may make one `rig_space_rename` without asking its owner. */
+    renameOnce?: boolean;
   }) => Promise<Result<{ runId: string; done: Promise<{ status: SessionStatus; answer: string }> }, string>>;
   /** Answers a held permission request on one of this device's runs. Returns false if this device holds no such request for that run, or the option isn't one it offered. */
   resolvePermission: (runId: string, requestId: string, optionId: string) => Promise<boolean>;
@@ -1001,7 +1075,7 @@ export function createSpacesDispatcher(deps: {
 } {
   const sessions = new Map<PersistentKey, PersistentSession>();
   /** Sessions given up on (`retireSession`) whose next one hasn't started yet: it starts fresh, told so. */
-  const retiredKeys = new Map<PersistentKey, 'stalled' | 'lost'>();
+  const retiredKeys = new Map<PersistentKey, 'stalled' | 'lost' | 'asked'>();
   const now = () => deps.now?.() ?? Date.now();
   /** Runs this process has started and not yet finalized: the only ones truly running here. */
   const liveRunIds = new Set<string>();
@@ -1136,6 +1210,14 @@ export function createSpacesDispatcher(deps: {
     }
     // A turn that only reacted ends with no words: its card says so instead of a blank answer.
     const reacted = status === 'done' && !turn.answer.text.trim() && turn.reactions.length > 0 ? turn.reactions : null;
+    // A quiet turn's card appears only when its answer has something for a person.
+    if (turn.quietCard) {
+      if (status === 'done' && !isSilentAnswer(turn.answer.text, turn.quietCard.silentAnswer)) {
+        await turn.announce?.();
+      } else {
+        log.info('Rig spaces dispatch: a quiet turn ended without a card', { runId: turn.runId, status });
+      }
+    }
     // The card flips out of "running" on this event (run status changes
     // aren't broadcast to the Room), so it must land before `finish`.
     turn.publisher.record('turn_ended', { status, ...(reason ? { reason } : {}), ...(reacted ? { reacted } : {}) });
@@ -1191,6 +1273,56 @@ export function createSpacesDispatcher(deps: {
     const turn = session.current ?? session.pending[0] ?? null;
     // A stopped turn the runtime started anyway is being cancelled, which settles its asks.
     if (turn?.finalized) return;
+    // The gardener's one free rename (`renameOnce`): the first `rig_space_rename` of that turn, allowed once.
+    if (turn?.renameOnce && rigToolOf(request.toolCall.title) === 'rig_space_rename') {
+      const allowOnce = request.options.find((option) => option.kind === 'allow_once')?.optionId ?? null;
+      if (allowOnce) {
+        turn.renameOnce = false;
+        recordPermissionDecided(turn, request, allowOnce, 'allowed');
+        deps.acp.resolvePermission(session.conversationId, request.requestId, allowOnce).catch((error: unknown) => {
+          log.warn('Rig spaces dispatch: could not allow the one free rename', { error: String(error) });
+        });
+        return;
+      }
+    }
+    log.debug('Rig spaces dispatch: permission asked', { kind: request.toolCall.kind, title: request.toolCall.title.slice(0, 120) });
+    // Reading a skill the app installed for views (`views/install-skills.ts`) never waits on a card.
+    const skillRead = deps.feed?.() === true ? bundledSkillReadOption(request) : null;
+    if (skillRead && turn) {
+      const skillPath = (request.toolCall as { path?: string }).path ?? '';
+      void isRealSkillFile(skillPath).then((real) => {
+        if (!real) return holdForOwner(session, turn, request);
+        return deps.acp.resolvePermission(session.conversationId, request.requestId, skillRead).catch((error: unknown) => {
+          log.warn('Rig spaces dispatch: could not allow reading a bundled skill', { error: String(error) });
+        });
+      });
+      return;
+    }
+    // Reading a file inside the space's own folder never waits on a card; the file's real path is checked first.
+    const spaceRead = deps.feed?.() === true && turn ? spaceReadOption(request, session.cwd) : null;
+    if (spaceRead && turn) {
+      void isRealSpaceFile(session.cwd, spaceRead.target).then((real) => {
+        if (!real) return holdForOwner(session, turn, request);
+        recordPermissionDecided(turn, request, spaceRead.optionId, 'allowed');
+        return deps.acp.resolvePermission(session.conversationId, request.requestId, spaceRead.optionId).catch((error: unknown) => {
+          log.warn('Rig spaces dispatch: could not allow reading a file of the space', { error: String(error) });
+        });
+      });
+      return;
+    }
+    // A turn a Rig view started may rewrite that view's own data without asking; nothing else.
+    const viewWrite = turn?.view ? viewDataWriteOption(request, session.cwd, turn.view) : null;
+    if (turn?.view && viewWrite) {
+      const view = turn.view;
+      void isPlainViewDataPath(session.cwd, view).then((plain) => {
+        if (!plain) return holdForOwner(session, turn, request);
+        recordPermissionDecided(turn, request, viewWrite, 'allowed');
+        return deps.acp.resolvePermission(session.conversationId, request.requestId, viewWrite).catch((error: unknown) => {
+          log.warn("Rig spaces dispatch: could not allow a view's own data write", { view, error: String(error) });
+        });
+      });
+      return;
+    }
     if (!turn) {
       log.warn('Rig spaces dispatch: permission request with no turn to attribute it to', {
         conversationId: session.conversationId,
@@ -1198,6 +1330,13 @@ export function createSpacesDispatcher(deps: {
       });
       return;
     }
+    holdForOwner(session, turn, request);
+  }
+
+  /** The request waits on its owner's card. */
+  function holdForOwner(session: PersistentSession, turn: QueuedTurn, request: AcpPermissionRequest): void {
+    // A quiet turn that needs its owner is no longer quiet: the approval must be reachable.
+    void turn.announce?.();
     session.heldPermissions.set(request.requestId, { request, turn });
     notifyPermissions(session, turn);
     turn.publisher.record('permission_requested', {
@@ -1360,7 +1499,16 @@ export function createSpacesDispatcher(deps: {
     // to either reloads an idle session, like a connector change.
     const agentsMd = providerId === 'claude' ? agentsMdForClaude(await readInstructions(cwd)) : null;
     const appendFor = (list: readonly AcpMcpServerWire[]) =>
-      [spaceRules({ bindingId, agent: providerId, rigTools: hasRigTools(list), feed: deps.feed?.() === true }), agentsMd].filter(Boolean).join('\n\n');
+      [
+        spaceRules({
+          bindingId,
+          agent: providerId,
+          rigTools: hasRigTools(list),
+          feed: deps.feed?.() === true,
+          views: deps.feed?.() === true ? { ownerUserId } : undefined,
+        }),
+        agentsMd,
+      ].filter(Boolean).join('\n\n');
     /** The settings a reloaded session had, re-applied after the reload (some agents reset them on load). */
     let carried: AgentConfigChange | undefined;
     // A turn after a long idle, on a large session: a new session instead of
@@ -1587,6 +1735,14 @@ export function createSpacesDispatcher(deps: {
     threadId?: string;
     onSettled?: QueuedTurn['onSettled'];
     onPermissionsChanged?: QueuedTurn['onPermissionsChanged'];
+    view?: QueuedTurn['view'];
+    startedBy?: RunStartedBy;
+    /** What the person pressed in the view, for the line above the run's card: the button's words, the item, their note. */
+    pressed?: Pick<RunTrigger, 'label' | 'item' | 'note'>;
+    /** Its card is posted in the Room only once it has something for a person: an approval to answer, or a reply that is not `silentAnswer`. */
+    quietCard?: { silentAnswer: string };
+    /** The turn may make one `rig_space_rename` without asking its owner. */
+    renameOnce?: boolean;
   };
 
   /** Starts one turn in the owner's persistent session for the space: a relay run, its card, and the prompt. */
@@ -1603,6 +1759,18 @@ export function createSpacesDispatcher(deps: {
     });
     if (!created.success) return err(created.error.message);
     liveRunIds.add(created.data.id);
+    try {
+      deps.onRunStarted?.({
+        bindingId: spec.bindingId,
+        runId: created.data.id,
+        ownerUserId: spec.ownerUserId,
+        agent: spec.agent,
+        startedBy: spec.startedBy ?? (spec.requestId ? 'message' : spec.view ? 'view' : 'comment'),
+        view: spec.view ?? null,
+      });
+    } catch (error) {
+      log.warn('Rig spaces: could not note the run for the space state', { error: String(error) });
+    }
     // Recorded now, not once the agent is reached: only runs this app started are ever closed out by it (`startedHere`).
     deps.store?.markInFlight?.(created.data.id, spec.bindingId);
 
@@ -1623,17 +1791,23 @@ export function createSpacesDispatcher(deps: {
         kind: 'session',
         meta: sessionMeta(withSource),
       });
-    let announced = await postCard(true);
-    if (!announced.success && spec.sourceMessageId && announced.error.code === 'unknown_meta_key') {
-      announced = await postCard(false);
-    }
-    if (!announced.success) {
-      log.warn('Rig spaces dispatch: could not post the session message for a run', {
-        bindingId: spec.bindingId,
-        runId: created.data.id,
-        error: announced.error.message,
-      });
-    }
+    let announced = false;
+    const announce = async (): Promise<void> => {
+      if (announced) return;
+      announced = true;
+      let posted = await postCard(true);
+      if (!posted.success && spec.sourceMessageId && posted.error.code === 'unknown_meta_key') {
+        posted = await postCard(false);
+      }
+      if (!posted.success) {
+        log.warn('Rig spaces dispatch: could not post the session message for a run', {
+          bindingId: spec.bindingId,
+          runId: created.data.id,
+          error: posted.error.message,
+        });
+      }
+    };
+    if (!spec.quietCard) await announce();
 
     // Read once per run: a change applies from the next run.
     const roomSees = deps.roomSees?.(spec.bindingId) ?? 'everything';
@@ -1650,6 +1824,12 @@ export function createSpacesDispatcher(deps: {
     });
     // First, so every card knows why details are missing.
     publisher.record(RUN_PRIVACY_EVENT, { level: roomSees });
+    // A run nobody typed a message for says what started it, for the line above its card.
+    const startedBy = spec.startedBy ?? (spec.requestId ? 'message' : spec.view ? 'view' : 'comment');
+    if (startedBy === 'view' || startedBy === 'clock' || startedBy === 'gardener') {
+      const trigger = parseRunTrigger({ by: startedBy, view: spec.view ?? undefined, ...(startedBy === 'view' ? spec.pressed : {}) });
+      if (trigger) publisher.record(RUN_TRIGGER_EVENT, trigger);
+    }
 
     // Files attached to the message that asked: on another member's computer
     // they may still be arriving through sync, so wait a little for them.
@@ -1712,6 +1892,9 @@ export function createSpacesDispatcher(deps: {
       reactions: [],
       onSettled: spec.onSettled,
       onPermissionsChanged: spec.onPermissionsChanged,
+      view: spec.view,
+      ...(spec.quietCard ? { announce, quietCard: spec.quietCard } : {}),
+      ...(spec.renameOnce ? { renameOnce: true } : {}),
       agent: spec.agent,
       model: model ?? null,
       lastEventAt: Date.now(),
@@ -1977,7 +2160,28 @@ export function createSpacesDispatcher(deps: {
   }
 
 
+  // One message, one turn: the app and the relay's router can both file a request for the same
+  // message, and the second must not start a second turn for the same agent.
+  const SAME_MESSAGE_MS = 10 * 60_000;
+  const MAX_ASKED_SOURCES = 200;
+  const askedSources = new Map<string, { runId: string | null; at: number }>();
+
   async function dispatch(request: AgentRequest): Promise<ClaimDispatchResult> {
+    let askedKey: string | null = null;
+    if (deps.feed?.() === true && request.sourceMessageId) {
+      const key = `${request.bindingId}::${request.targetOwnerUserId}::${request.targetAgent}::${request.sourceMessageId}`;
+      const seen = askedSources.get(key);
+      if (seen && Date.now() - seen.at < SAME_MESSAGE_MS) return { duplicateOf: seen.runId };
+      // Set before the start is awaited, so two requests claimed back to back cannot both start.
+      askedSources.delete(key);
+      askedSources.set(key, { runId: null, at: Date.now() });
+      while (askedSources.size > MAX_ASKED_SOURCES) {
+        const oldest = askedSources.keys().next().value;
+        if (oldest === undefined) break;
+        askedSources.delete(oldest);
+      }
+      askedKey = key;
+    }
     const started = await startTurn({
       bindingId: request.bindingId,
       ownerUserId: request.targetOwnerUserId,
@@ -1988,6 +2192,11 @@ export function createSpacesDispatcher(deps: {
       askedByOwner: request.requestedByUserId === request.targetOwnerUserId,
       askerUserId: request.requestedByUserId,
     });
+    if (askedKey) {
+      const entry = askedSources.get(askedKey);
+      if (!started.success) askedSources.delete(askedKey);
+      else if (entry) entry.runId = started.data.runId;
+    }
     return started.success ? { runId: started.data.runId } : { failed: true, reason: started.error };
   }
 
@@ -2005,6 +2214,14 @@ export function createSpacesDispatcher(deps: {
     extraHiddenContext?: string;
     threadId?: string;
     onPermissionsChanged?: (pending: AcpPermissionRequest[]) => void;
+    /** The Rig view this turn was started by or for. */
+    view?: string;
+    /** What started it; a view when `view` is set, otherwise a comment. */
+    startedBy?: RunStartedBy;
+    /** Its card is posted in the Room only once it has something for a person: an approval to answer, or a reply that is not `silentAnswer`. */
+    quietCard?: { silentAnswer: string };
+    /** The turn may make one `rig_space_rename` without asking its owner. */
+    renameOnce?: boolean;
   }): Promise<Result<{ runId: string; done: Promise<{ status: SessionStatus; answer: string }> }, string>> {
     let settle!: (value: { status: SessionStatus; answer: string }) => void;
     const done = new Promise<{ status: SessionStatus; answer: string }>((resolve) => (settle = resolve));
@@ -2229,10 +2446,20 @@ export function createSpacesDispatcher(deps: {
       // Prompts queued behind it never started: they go to the new conversation.
       const queued = session.pending.filter((t) => t !== turn && t.promptSent && !t.finalized);
       session.pending = session.pending.filter((t) => t !== turn && !queued.includes(t));
+      // The session never took this prompt at all (never started, never a word): nothing of it
+      // has run, so it is safe to send it again. It goes to a new conversation by itself, once;
+      // a second silence fails with a Retry as before.
+      const neverTaken = !heard && session.current !== turn && !!turn.moveToNewSession && !turn.movedToNewSession;
       if (session.current === turn) session.current = null;
       releaseHeldPermissions(session, turn);
       retireSession(session, 'stalled');
-      void finalizeTurn(turn, 'failed', stalledReason(heard), 'stalled');
+      if (neverTaken) {
+        turn.stallReported = false;
+        turn.lastEventAt = Date.now();
+        void turn.moveToNewSession!('the session did not take the prompt');
+      } else {
+        void finalizeTurn(turn, 'failed', stalledReason(heard), 'stalled');
+      }
       for (const next of queued) void next.moveToNewSession?.('the session stalled');
     }
   }
@@ -2249,7 +2476,7 @@ export function createSpacesDispatcher(deps: {
    * ends a wedged agent process. Turns still preparing their prompt for it
    * notice `retired` and go to the new conversation instead.
    */
-  function retireSession(session: PersistentSession, why: 'stalled' | 'lost'): void {
+  function retireSession(session: PersistentSession, why: 'stalled' | 'lost' | 'asked'): void {
     if (session.retired) return;
     session.retired = why;
     retiredKeys.set(session.key, why);
@@ -2265,7 +2492,18 @@ export function createSpacesDispatcher(deps: {
     if (running && !running.finalized) {
       session.current = null;
       releaseHeldPermissions(session, running);
-      void finalizeTurn(running, 'failed', 'Its conversation was lost. Retry starts a new conversation.');
+      // Asked for by its owner (`/new`): the turn just stops, nothing went wrong.
+      if (why === 'asked') void finalizeTurn(running, 'stopped');
+      else void finalizeTurn(running, 'failed', 'Its conversation was lost. Retry starts a new conversation.');
+    }
+    // Asked for by its owner: turns still queued behind the running one have nowhere to go (a
+    // scheduled pass, Rig's own look). They stop too, so nothing is left showing as at work.
+    if (why === 'asked') {
+      for (const queued of session.pending.splice(0)) {
+        if (queued.finalized) continue;
+        releaseHeldPermissions(session, queued);
+        void finalizeTurn(queued, 'stopped');
+      }
     }
     // Nothing waits on it: a wedged runtime may never answer.
     const close = deps.acp.stopSession
@@ -2274,10 +2512,79 @@ export function createSpacesDispatcher(deps: {
     close.catch(() => {});
   }
 
+  /**
+   * The owner asked for a new conversation with their agents in this space (`/new` in the Room).
+   * Each session they have here is given up on, running or not, so their next message starts a
+   * fresh one, which is handed the recent chat as a new session always is. Returns how many
+   * sessions were set aside.
+   */
+  function startOver(bindingId: string, ownerUserId: string): number {
+    let count = 0;
+    for (const agent of ['claude', 'codex'] as const) {
+      const key = keyFor(bindingId, ownerUserId, agent);
+      const live = sessions.get(key);
+      if (live) {
+        retireSession(live, 'asked');
+        count += 1;
+        continue;
+      }
+      const stored = deps.store?.get(key);
+      if (stored && !stored.retired) {
+        deps.store?.set(key, { ...stored, retired: 'asked', updatedAt: Date.now() });
+        retiredKeys.set(key, 'asked');
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * The owner asked to stop what their agents are doing in this space (`/stop` in the Room). Each
+   * turn going is asked to stop. A session that has not let go of its turn `STOP_GRACE_MS` later
+   * is not answering: it is set aside like `startOver`, which ends the turn as stopped.
+   */
+  async function stopAll(bindingId: string, ownerUserId: string): Promise<number> {
+    let count = 0;
+    for (const agent of ['claude', 'codex'] as const) {
+      const runId = currentRunId(bindingId, ownerUserId, agent);
+      if (!runId) continue;
+      count += 1;
+      await stopRun(runId, bindingId).catch(() => false);
+      const timer = setTimeout(() => {
+        if (currentRunId(bindingId, ownerUserId, agent) !== runId) return;
+        const stuck = sessions.get(keyFor(bindingId, ownerUserId, agent));
+        if (stuck) retireSession(stuck, 'asked');
+      }, STOP_GRACE_MS);
+      (timer as { unref?: () => void }).unref?.();
+    }
+    return count;
+  }
+
+  /** The owner's sessions in a space, for `/status`: is a turn going, how full, when it last took a turn. */
+  function sessionStatus(bindingId: string, ownerUserId: string): SpaceSessionStatus[] {
+    const out: SpaceSessionStatus[] = [];
+    for (const agent of ['claude', 'codex'] as const) {
+      const key = keyFor(bindingId, ownerUserId, agent);
+      const live = sessions.get(key);
+      const stored = deps.store?.get(key);
+      if (!live && (!stored || stored.retired)) continue;
+      out.push({
+        agent,
+        working: Boolean(live && (live.current || live.pending.length > 0)),
+        contextTokens: live?.contextTokens ?? stored?.contextTokens ?? null,
+        lastTurnAt: live?.lastTurnAt ?? stored?.lastTurnAt ?? null,
+      });
+    }
+    return out;
+  }
+
   return {
     dispatch,
     runLocal,
     stopRun,
+    startOver,
+    stopAll,
+    sessionStatus,
     resolvePermission,
     settleInterrupted,
     settleIfNotLive,

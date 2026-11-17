@@ -10,6 +10,8 @@ import {
   openFocusTab,
   openPageTab,
   openSessionTab,
+  openViewTab,
+  syncViewTabs,
   renamePageTab,
   moveFileTabs,
   closeFileTabs,
@@ -192,5 +194,29 @@ describe('closeFileTabs', () => {
     ]);
     expect(closed.active).toBe(1);
     expect(closeFileTabs(closed, '/rig/missing.md')).toBe(closed);
+  });
+});
+
+describe('view tabs', () => {
+  it('opens one tab per view name', () => {
+    const once = openViewTab(open('/rig/a.md'), 'desk');
+    expect(once.tabs).toEqual([{ kind: 'file', path: '/rig/a.md' }, { kind: 'view', name: 'desk' }]);
+    expect(once.active).toBe(1);
+    expect(openViewTab(activateTab(once, 0), 'desk')).toEqual({ tabs: once.tabs, active: 1 });
+  });
+  it('adds tabs for views that appear without taking the active tab', () => {
+    const state = syncViewTabs(open('/rig/a.md'), ['card-demo', 'desk'], []);
+    expect(state.tabs.map((tab) => (tab.kind === 'view' ? tab.name : tab.kind))).toEqual(['file', 'card-demo', 'desk']);
+    expect(state.active).toBe(0);
+  });
+  it('activates the first view when nothing else is open', () => {
+    expect(syncViewTabs(NO_TABS, ['card-demo', 'desk'], []).active).toBe(0);
+  });
+  it('closes the tab of a view that went away, and never doubles one', () => {
+    const state = syncViewTabs(NO_TABS, ['card-demo', 'desk'], []);
+    const next = syncViewTabs(state, ['desk'], ['card-demo']);
+    expect(next.tabs).toEqual([{ kind: 'view', name: 'desk' }]);
+    expect(next.active).toBe(0);
+    expect(syncViewTabs(next, [], ['desk'])).toEqual(NO_TABS);
   });
 });

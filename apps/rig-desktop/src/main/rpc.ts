@@ -75,7 +75,7 @@ import { rigPagesController } from './rig/pages/pages-controller';
 import { rigSpacesConnectionController } from './rig/spaces-connection';
 import { rigRoomCacheController } from './rig/room-cache-store';
 import { rigOfflineController } from './rig/offline-home';
-import { rigSpacesDispatchController } from './rig/spaces/dispatch-controller-instance';
+import { rigSpaceStateController, rigSpacesDispatchController } from './rig/spaces/dispatch-controller-instance';
 import { rigShareLinksController } from './rig/share-links';
 import { rigWorkspaceController } from './rig/workspace';
 
@@ -238,7 +238,9 @@ export const rpcRouter = createRPCRouter({
     // key, account-scoped like `pulse` above but a different relay
     // resource with its own (short) timeout — see `space-status.ts`'s own
     // header comment.
+    // `spaceStatus` is Home's poll of the relay; `spaceState` is this Mac's own runtime facts.
     spaceStatus: rigSpaceStatusController,
+    spaceState: rigSpaceStateController,
     // Notifications (rig docs/notifications-spec.md): unread summary,
     // Activity, read marks, the per-space level, and where a banner click
     // goes. See `notifications/electron.ts`.

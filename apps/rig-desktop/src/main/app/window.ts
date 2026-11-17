@@ -192,6 +192,19 @@ function registerBrowserWebviewHandlers(win: BrowserWindow): void {
     stripBrowserWebviewParams(params);
   });
 
+  // Rig views (`renderer/features/views`): a view's frame is the one inline document the app gave
+  // it (`srcdoc`). Its sandbox and content policy stop every load from inside that document, but
+  // neither stops the frame from navigating itself away (`location.href`, a link, a meta refresh),
+  // which would carry the view's data out in the address. Only main can refuse that. The view
+  // frame is the only frame this window has (web pages are webviews, with their own contents),
+  // so the rule is: no frame in this window ever navigates anywhere but to its own `srcdoc`.
+  // The address is not logged: it may hold what the page was trying to send.
+  win.webContents.on('will-frame-navigate', (event) => {
+    if (event.isMainFrame || event.url === 'about:srcdoc') return;
+    log.warn('Rig views: a frame tried to navigate away; refused');
+    event.preventDefault();
+  });
+
   win.webContents.on('did-attach-webview', (_event, webContents) => {
     if (!browserWebContentsRegistry.handleWebviewAttached(webContents)) {
       log.warn('Closed webview without a registered browser session');

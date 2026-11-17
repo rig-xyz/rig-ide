@@ -1,0 +1,84 @@
+<!doctype html>
+<!-- A feed: what came in, newest first. Each entry says who, where (a link to the source), when, then the text,
+     then what Rig made of it as a state pill. One readable column, so the narrow page.
+     Data shape: templates/feed.json.
+
+     Use this when the entries are people's words. When each entry has a result you want to check at a glance,
+     use intake.html instead (two sides per row). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What came in</title>
+<link rel="stylesheet" href="../_rig/rig.css">
+<script src="../_rig/rig-view.js"></script>
+<style>
+  /* Layout only: an avatar column, then the entry. */
+  .entry { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 3px 10px; padding: 12px 14px; border-top: 1px solid var(--line); }
+  .entry:first-child { border-top: 0; }
+  .entry > :not(.rv-av) { grid-column: 2; }
+  .entry .text { font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; color: var(--fg-1); overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main class="rv-page rv-narrow" id="root"></main>
+<script>
+const { h, note, pill, av, ago, time, state } = rig;
+state.source ??= 'all';
+state.shown ??= 12;
+
+// What Rig did with an entry, as a state pill. Color is state only.
+const MADE = { drafted: ['accent', 'Drafted from it'], linked: ['ok', 'Linked'], skipped: ['quiet', 'Skipped'], asked: ['warn', 'Needs you'] };
+
+rig.mount((d) => {
+  const sources = [...new Set(d.entries.map((e) => e.source))];
+  const all = [...d.entries].sort((a, b) => new Date(b.at) - new Date(a.at));
+  const list = all.filter((e) => state.source === 'all' || e.source === state.source);
+  const shown = list.slice(0, state.shown);
+  const failed = (d.sources || []).filter((s) => !s.ok);
+
+  return h`
+  <header class="rv-head"><div>
+    <h1 class="rv-title">What came in</h1>
+    <span class="rv-meta" data-key="meta">${all.length} since ${time(d.since)} · read ${ago(d.read_at)}</span>
+  </div></header>
+
+  ${note(d.rig && d.rig.summary)}
+
+  ${failed.length ? h`<div class="rv-line">${failed.map((s) => h`
+    <span class="rv-pill bad" data-key="src-${s.name}">${s.name} could not be read · last worked ${ago(s.last_ok)}</span>`)}</div>` : ''}
+
+  ${all.length ? h`
+  <div class="rv-chips">${['all', ...sources].map((s) =>
+    h`<button class="rv-chip" data-source="${s}" aria-pressed="${state.source === s}">${s === 'all' ? 'All' : s}</button>`)}</div>
+
+  <div class="rv-panel">${shown.map((e) => {
+      const [tone, label] = MADE[e.made] || ['', e.made];
+      return h`
+      <div class="entry" data-key="entry-${e.id}">
+        ${av(e.who)}
+        <div class="rv-line">
+          <b style="font-size:13px">${e.who}</b>
+          <span class="rv-small">${e.url ? h`<a href="${e.url}">${e.where}</a>` : e.where} · ${ago(e.at)}</span>
+        </div>
+        <div class="text">${e.text}</div>
+        <div class="rv-line" style="margin-top:3px">
+          ${pill(label, tone)}
+          ${e.made_note ? h`<span class="rv-small">${e.made_note}</span>` : ''}
+          ${e.made === 'skipped' ? h`<button class="rv-btn quiet sm" data-act="use" data-id="${e.id}">Use it after all</button>` : ''}
+        </div>
+      </div>`;
+    })}</div>
+  ${list.length ? '' : h`<div class="rv-empty"><b>Nothing from ${state.source}</b>Nothing came in from there since ${time(d.since)}.</div>`}
+  ${list.length > shown.length ? h`<button class="rv-btn" style="align-self:flex-start" data-more>Show ${list.length - shown.length} more</button>` : ''}`
+  : h`<div class="rv-empty"><b>Nothing came in since ${time(d.since)}</b>New messages appear here after the next read, each with what Rig made of it.</div>`}`;
+});
+
+document.addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-source]');
+  if (chip) { state.source = chip.dataset.source; state.shown = 12; rig.rerender(); }
+  if (e.target.closest('[data-more]')) { state.shown += 12; rig.rerender(); }
+});
+</script>
+</body>
+</html>

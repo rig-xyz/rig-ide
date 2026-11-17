@@ -1,0 +1,128 @@
+<!doctype html>
+<!-- A tracker: where a piece of work stands. A few numbers that are the point (and one meter), then the items grouped
+     by who they wait on. Data shape: templates/tracker.json.
+
+     An item that waits on the viewer carries `ask` and is shown as a decision card at the top, under the note: the next
+     action first, then real alternatives. Every other item is a row; a row's state is a pill or a line, never a decision.
+
+     The data carries facts only. The groups ("Waiting on you", "Nobody has it", ...) and every count are worked out
+     here, so a refresh is new facts plus a new summary. A group the viewer does not need (Done) folds to its count. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Where it stands</title>
+<link rel="stylesheet" href="../_rig/rig.css">
+<script src="../_rig/rig-view.js"></script>
+<style>
+  .item { --row: 76px minmax(0, 1fr) auto auto; }
+  .item .rv-row-title { white-space: normal; }
+  /* Narrow: id, owner and action on one line, then the title underneath. */
+  @media (max-width: 760px) {
+    .item { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "id who act" "title title title"; gap: 6px 12px; }
+    .item .rv-id { grid-area: id; } .item .rv-stack { grid-area: title; } .item .who { grid-area: who; } .item .actions { grid-area: act; }
+  }
+</style>
+</head>
+<body>
+<main class="rv-page" id="root"></main>
+<script>
+const { h, card, note, pill, prio, av, ago, state } = rig;
+state.only ??= 'all';
+state.open ??= {};
+
+// [key, label, dot tone, test]. First match wins, so every item lands in exactly one group.
+const GROUPS = [
+  ['you', 'Also with you', 'warn', (i, me) => i.status !== 'done' && i.waits_on_id && me && i.waits_on_id === me.id],
+  ['unowned', 'Nobody has it', 'bad', (i) => i.status !== 'done' && !i.owner_id],
+  ['others', 'With someone else', 'accent', (i) => i.status !== 'done'],
+  ['done', 'Done', 'ok', () => true],
+];
+
+const row = (i) => h`
+  <div class="rv-row item" data-key="item-${i.id}">
+    <span class="rv-id">${i.url ? h`<a href="${i.url}">${i.id}</a>` : i.id}</span>
+    <span class="rv-stack">
+      <span class="rv-row-title">${i.title}</span>
+      ${i.rig_note ? h`<span class="rv-row-meta">${i.rig_note}</span>` : ''}
+    </span>
+    <span class="rv-line who">${prio(i.priority)}${av(i.owner_name)}</span>
+    <span class="actions"><span class="rv-small">${ago(i.changed_at)}</span></span>
+  </div>`;
+
+// The card id is the item id (APP-570), so the session that gets the click knows which one.
+const decision = (i) => card({
+  id: i.id,
+  label: i.ask.label || `Next · ${i.id}`,
+  title: i.title,
+  body: i.ask.body,
+  why: h`${i.url ? h`<a href="${i.url}">${i.id}</a>` : i.id} · ${i.owner_name ? i.owner_name : 'nobody has it'}${i.ask.context ? ` · ${i.ask.context}` : ''}`,
+  note: 'Change something first (optional)',
+  actions: i.ask.actions,                    // the proposal first and primary, then real alternatives
+});
+
+rig.mount((d, ctx) => {
+  // Items that wait on the viewer and carry an ask are cards; they are kept out of the row groups below.
+  const asks = d.items.filter((i) => i.ask && i.status !== 'done');
+  const seen = new Set(asks.map((i) => i.id));
+  const groups = GROUPS.map(([key, label, dot, test]) => {
+    const items = d.items.filter((i) => !seen.has(i.id) && test(i, ctx.me));
+    items.forEach((i) => seen.add(i.id));
+    return { key, label, dot, items };
+  }).filter((g) => g.items.length);
+  const n = (k) => (groups.find((g) => g.key === k) || { items: [] }).items.length;
+  const doneN = n('done');
+  const unownedN = d.items.filter((i) => i.status !== 'done' && !i.owner_id).length;
+  const shown = groups.filter((g) => state.only === 'all' || g.key === state.only);
+
+  return h`
+  <header class="rv-head"><div>
+    <span class="rv-eyebrow">${d.source}</span>
+    <h1 class="rv-title">${d.title}</h1>
+    <span class="rv-meta" data-key="meta">${d.items.length} items · read ${ago(d.read_at)}</span>
+  </div></header>
+
+  ${note(d.rig && d.rig.summary)}
+
+  ${asks.length ? h`
+  <section class="rv-stack" style="gap:6px" data-key="asks">
+    <h2 class="rv-sec"><span class="rv-dot warn"></span>Waiting on you<span class="n">${asks.length}</span></h2>
+    <div class="rv-list">${(state.open.asks ? asks : asks.slice(0, 5)).map(decision)}</div>
+      ${asks.length > 5 && !state.open.asks ? h`<div><button class="rv-btn quiet sm" data-open="asks">Show the other ${asks.length - 5}</button></div>` : ''}
+  </section>` : ''}
+
+  ${d.items.length ? h`
+  <div class="rv-stats">
+    <div class="rv-stat" data-key="stat-open"><b>${d.items.length - doneN}</b><span>still open</span></div>
+    <div class="rv-stat" data-key="stat-you"><b>${asks.length + n('you')}</b><span>waiting on you</span></div>
+    <div class="rv-stat" data-key="stat-unowned"><b>${unownedN}</b><span>nobody has</span></div>
+  </div>
+  <div class="rv-meter" data-key="progress" role="img" aria-label="${doneN} of ${d.items.length} done"><i style="width:${Math.round(100 * doneN / d.items.length)}%;background:var(--ok)"></i></div>
+
+  <div class="rv-chips">${[['all', 'All', d.items.length], ...groups.map((g) => [g.key, g.label, g.items.length])].map(([key, label, c]) =>
+    h`<button class="rv-chip" data-only="${key}" aria-pressed="${state.only === key}">${label}<span class="n">${c}</span></button>`)}</div>
+
+  ${shown.map((g) => {
+    // Done is folded to its count until asked for: it is reference, not news.
+    const folded = g.key === 'done' && !state.open.done && state.only !== 'done';
+    return h`
+    <section class="rv-stack" style="gap:6px" data-key="group-${g.key}">
+      <h2 class="rv-sec"><span class="rv-dot ${g.dot}"></span>${g.label}<span class="n">${g.items.length}</span></h2>
+      ${folded ? h`<div><button class="rv-btn quiet sm" data-open="done">Show the ${g.items.length} done</button></div>`
+        : h`<div class="rv-panel"><div class="rv-rows">${g.items.map(row)}</div></div>`}
+    </section>`;
+  })}`
+  : h`<div class="rv-empty"><b>Nothing here yet</b>Items appear as soon as ${d.source} has some.</div>`}
+
+  <div class="rv-foot">From ${d.source}. Grey lines under a title are Rig's reading, not the tracker's.</div>`;
+});
+
+document.addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-only]');
+  if (chip) { state.only = chip.dataset.only; rig.rerender(); }
+  const open = e.target.closest('[data-open]');
+  if (open) { state.open[open.dataset.open] = true; rig.rerender(); }
+});
+</script>
+</body>
+</html>

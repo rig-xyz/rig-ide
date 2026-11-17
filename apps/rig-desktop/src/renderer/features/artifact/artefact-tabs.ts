@@ -5,7 +5,7 @@
  * real state (the session owns the window and the pinned card floats over
  * it), not an empty pane.
  *
- * Four tab kinds: a web page (one per link), a file (one per path — re-opening an open file activates
+ * Five tab kinds (the fifth, a Rig view, is described on its type): a web page (one per link), a file (one per path — re-opening an open file activates
  * its existing tab, browser convention), one of the space's own chat sessions (one per session) and the
  * focus view (at most one — it is a lens over the whole working set, so a second copy could only
  * disagree with the first).
@@ -21,7 +21,9 @@ export type ArtefactTab =
   /** A web page (a Claude artifact, a Google Doc) opened beside the Room, one per link. */
   | { kind: 'page'; url: string; title: string }
   /** One of the space's own chat sessions (yours alone), opened beside the Room. */
-  | { kind: 'session'; sessionId: string };
+  | { kind: 'session'; sessionId: string }
+  /** A Rig view the space carries at `views/<name>/` (`features/views`), one per name. */
+  | { kind: 'view'; name: string };
 
 export type ArtefactTabsState = {
   tabs: readonly ArtefactTab[];
@@ -82,6 +84,40 @@ export function openSessionTab(state: ArtefactTabsState, sessionId: string): Art
   const existing = state.tabs.findIndex((tab) => tab.kind === 'session' && tab.sessionId === sessionId);
   if (existing !== -1) return { tabs: state.tabs, active: existing };
   return { tabs: [...state.tabs, { kind: 'session', sessionId }], active: state.tabs.length };
+}
+
+/** Open (or re-activate) the tab for one of the space's views. */
+export function openViewTab(state: ArtefactTabsState, name: string): ArtefactTabsState {
+  const existing = state.tabs.findIndex((tab) => tab.kind === 'view' && tab.name === name);
+  if (existing !== -1) return { tabs: state.tabs, active: existing };
+  return { tabs: [...state.tabs, { kind: 'view', name }], active: state.tabs.length };
+}
+
+/**
+ * The space's views changed on disk: `added` get a tab each, `removed` lose theirs. View tabs are
+ * derived from the files, never opened by hand, so a new one does not take the active tab from
+ * what the member is looking at; it becomes active only when nothing else is open.
+ */
+export function syncViewTabs(
+  state: ArtefactTabsState,
+  added: readonly string[],
+  removed: readonly string[]
+): ArtefactTabsState {
+  let next = state;
+  for (let i = next.tabs.length - 1; i >= 0; i--) {
+    const tab = next.tabs[i];
+    if (tab.kind === 'view' && removed.includes(tab.name)) next = closeTab(next, i);
+  }
+  const missing = added.filter(
+    (name) => !next.tabs.some((tab) => tab.kind === 'view' && tab.name === name)
+  );
+  if (missing.length === 0) return next;
+  const tabs = [...next.tabs, ...missing.map((name) => ({ kind: 'view' as const, name }))];
+  // Nothing open: the first new view shows. Otherwise the member keeps what they were looking at,
+  // unless that was another view, in which case the newest one is what they are waiting for.
+  const current = next.tabs[next.active];
+  const active = !current || current.kind === 'view' ? tabs.length - missing.length : next.active;
+  return { tabs, active };
 }
 
 /** A page's tab takes the page's own title once it loads. */

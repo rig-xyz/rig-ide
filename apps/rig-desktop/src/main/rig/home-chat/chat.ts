@@ -2,8 +2,9 @@ import type { AcpHttpMcpServerWire, AcpPermissionRequest } from '@emdash/core/ac
 import { err, ok, type Result } from '@emdash/shared';
 import { finalAnswerFromEvents, type RawSessionEvent, type SpacesAcpSessions } from '../spaces/dispatch';
 import type { HomeChatRun } from '@shared/rig/home-chat';
-import { HOME_BINDING, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
-import { askFirst, lockedSession, rigTool } from '../orch/lockdown';
+import { HOME_BINDING, NAV_TOOL, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
+import { checkPermission } from '../orch/checks';
+import { askFirst, lockedSession, rigTool, SKILL_TOOL } from '../orch/lockdown';
 
 /**
  * Home's chat with a real Claude (rig docs/orchestrator-architecture.md §5):
@@ -18,7 +19,7 @@ import { askFirst, lockedSession, rigTool } from '../orch/lockdown';
  */
 
 /** The rig tools Home's Claude may use without asking again: the four primitives (design §10.3). */
-export const HOME_CHAT_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_act', 'rig_start']);
+export const HOME_CHAT_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_act', 'rig_start', NAV_TOOL]);
 
 export const HOME_CHAT_RULES = [
   "You are Rig, in the person's Home: where they ask about their work across their spaces and tell Rig what to do. Rig's Feed, on the right, holds the cards Rig thinks need them or that their Claude could take on; what Rig held back stays out of sight until they ask.",
@@ -29,7 +30,9 @@ export const HOME_CHAT_RULES = [
   'Lead with the answer. For several things, use one numbered list, most pressing first, one line each, at most about eight, and give the rest as a count. No headings. Name things explicitly ("Christopher\'s PR #343 in mobile-ios-v2"), and cards by their title. Never show Rig\'s ids (sit_…, chg_…, oev_…, run_…, rule_…, item and card refs): they are for your tool calls only.',
   '"These two", "the first one" and the like mean rows of the last list you showed; if it is ambiguous, ask.',
   "To change something, pass the person's reason, in their words, as args.reason. Afterwards, say what changed in a few words; if they ask to undo it, find the change with rig_query changes and rig_act undo it. Actions that speak for them, involve other people or can't be undone come back as a card: say it needs their click; nothing has happened yet.",
+  'To arrange their list of spaces on the left, use rig_nav: list shows the groups; create_group, rename_group, delete_group and move change them; rename_space renames a space for everyone in it, so only with the name they gave. Find space refs with rig_query spaces.',
   'To start work, call rig_start with the task or a card ref and the user_turn_id from this turn\'s <rig_turn> line. If Rig asks which space, ask them.',
+  "You can also read through the person's connectors (Slack, Linear, GitHub and the rest) with their read tools when Rig's own data does not answer, and use their skills. You cannot write, send or change anything through a connector from here.",
   'You have no shell and no files here.',
 ].join('\n');
 
@@ -79,10 +82,15 @@ export type HomeChat = {
   reset(): Promise<void>;
 };
 
-/** Answers a permission request: allow once for the Feed tools, refuse anything else. */
+/**
+ * Answers a permission request: allow once for the Feed tools and for a read through one of the
+ * person's connectors (the same reads the orchestrator may make, `checkPermission`); refuse
+ * anything else, a connector's write included.
+ */
 export function homeChatPermission(request: AcpPermissionRequest): string | null {
   const tool = rigToolOf(request.toolCall.title);
-  const want = tool && HOME_CHAT_TOOLS.has(tool) ? 'allow_once' : 'reject_once';
+  if (!tool) return checkPermission(request);
+  const want = HOME_CHAT_TOOLS.has(tool) ? 'allow_once' : 'reject_once';
   return request.options.find((o) => o.kind === want)?.optionId ?? null;
 }
 
@@ -115,7 +123,7 @@ export function createHomeChat(deps: HomeChatDeps): HomeChat {
       mcpServers: [rig],
       // The person's own default model, as in their other Claude sessions.
       systemPromptAppend: [HOME_CHAT_RULES, homeChatSelf((await deps.selfNames?.().catch(() => [])) ?? [])].filter(Boolean).join('\n'),
-      ...lockedSession({ rigStart: true, policy: { allow: [...HOME_CHAT_TOOLS].map(rigTool) } }),
+      ...lockedSession({ rigStart: true, policy: { allow: [...[...HOME_CHAT_TOOLS].map(rigTool), SKILL_TOOL] } }),
     });
     if (!started.success) return err(started.error);
     // Ask first, whatever the person's default mode: if it can't be set, no chat.
