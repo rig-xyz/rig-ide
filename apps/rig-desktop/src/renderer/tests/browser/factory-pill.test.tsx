@@ -198,10 +198,13 @@ describe('Factory pill', () => {
     await until(() =>
       expect(Math.round(edge - shape('pill')!.getBoundingClientRect().left)).toBe(40)
     );
-    const pill = shape('pill')!.getBoundingClientRect();
-    const toggle = q('dock-toggle')!.getBoundingClientRect();
-    expect(toggle.top).toBeGreaterThanOrEqual(pill.top);
-    expect(toggle.bottom).toBeLessThanOrEqual(pill.bottom);
+    // (Once its spring has settled: the chevron eases into place.)
+    await until(() => {
+      const pill = shape('pill')!.getBoundingClientRect();
+      const toggle = q('dock-toggle')!.getBoundingClientRect();
+      expect(toggle.top).toBeGreaterThanOrEqual(pill.top);
+      expect(toggle.bottom).toBeLessThanOrEqual(pill.bottom);
+    });
     await click(q('dock-toggle')!);
     expect(stage.dataset.open).toBe('true');
   });
