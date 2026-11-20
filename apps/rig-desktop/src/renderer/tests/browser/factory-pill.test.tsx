@@ -83,15 +83,17 @@ const view = (over: Partial<ViewManifest> = {}): ViewManifest => ({
 
 function Harness({
   views,
+  room: given,
   onOpenView,
   onPreview,
 }: {
   views: ViewManifest[];
+  room?: RoomSnapshot;
   onOpenView: (name: string) => void;
   onPreview: (ids: ReadonlySet<string> | null) => void;
 }) {
   const [open, setOpen] = React.useState(false);
-  const room = React.useMemo(snapshot, []);
+  const room = React.useMemo(() => given ?? snapshot(), [given]);
   const focus = useDockFocus({
     enabled: true,
     snapshot: room,
@@ -136,7 +138,7 @@ afterEach(() => {
   mocks.spaceState = null;
 });
 
-async function show(views: ViewManifest[] = [view()]) {
+async function show(views: ViewManifest[] = [view()], room?: RoomSnapshot) {
   const onOpenView = vi.fn();
   const onPreview = vi.fn();
   host = document.createElement('div');
@@ -146,7 +148,7 @@ async function show(views: ViewManifest[] = [view()]) {
     root!.render(
       <QueryClientProvider client={new QueryClient()}>
         <TooltipProvider>
-          <Harness views={views} onOpenView={onOpenView} onPreview={onPreview} />
+          <Harness views={views} room={room} onOpenView={onOpenView} onPreview={onPreview} />
         </TooltipProvider>
       </QueryClientProvider>
     );
@@ -178,6 +180,30 @@ describe('Factory pill', () => {
     expect(wall.left).toBeGreaterThanOrEqual(stage.right);
     expect(wall.top).toBeLessThan(pill.top);
     expect(wall.bottom).toBeGreaterThan(pill.bottom);
+  });
+
+  it('with no agent, no loop and no topic there is no pill until its spot is pointed at', async () => {
+    await show([view()], { ...snapshot(), agents: [], themes: undefined });
+    const stage = q('factory-pill')!;
+    const edge = stage.getBoundingClientRect().right;
+    expect(stage.dataset.empty).toBe('true');
+    expect(q('dock-agents')).toBeNull();
+    // At rest both shapes wait past the edge, further out than their shadow reaches.
+    await until(() => {
+      expect(shape('pill')!.getBoundingClientRect().left).toBeGreaterThanOrEqual(edge + 16);
+      expect(shape('wall')!.getBoundingClientRect().left).toBeGreaterThanOrEqual(edge + 16);
+    });
+    // Pointed at, the pill comes out around the chevron that opens the space's details.
+    await over(q('factory-pill-rail')!, 'mouseover');
+    await until(() =>
+      expect(Math.round(edge - shape('pill')!.getBoundingClientRect().left)).toBe(40)
+    );
+    const pill = shape('pill')!.getBoundingClientRect();
+    const toggle = q('dock-toggle')!.getBoundingClientRect();
+    expect(toggle.top).toBeGreaterThanOrEqual(pill.top);
+    expect(toggle.bottom).toBeLessThanOrEqual(pill.bottom);
+    await click(q('dock-toggle')!);
+    expect(stage.dataset.open).toBe('true');
   });
 
   it('a view with no schedule has no unit: the pill shows loops', async () => {

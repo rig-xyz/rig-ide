@@ -81,6 +81,8 @@ const PILL_WIDTH_PX = 40;
 const GAP_TO_TRANSCRIPT_PX = 12;
 /** How far past the pane's edge the shapes reach, so the edge itself is cut by the pane, straight. */
 const WALL_PX = 48;
+/** How much further past the edge an empty pill waits: its own width, and out of reach of its shadow. */
+const TUCKED_PX = PILL_WIDTH_PX + 24;
 /** How far the wall runs above and below the pill, for the goo to draw the fillets on. */
 const WALL_REACH_PX = 24;
 /** The goo layer reaches this far left of the edge, for a label or the panel. */
@@ -258,8 +260,15 @@ export function FactoryPill({
   }, []);
   useEffect(() => () => void (wideTimer.current && clearTimeout(wideTimer.current)), []);
   const widened = wide && !!onExpand;
-  /** What the chevron's row adds to the pill's height while it is there. */
-  const grownBy = widened ? CORNER_SIZE + RAIL_GAP_PX : 0;
+  // With nothing standing here, no agent and no topic, there is no pill at rest: an empty shape
+  // says nothing. The way into the space's details stays where the pill would be, and the pill
+  // comes out of the edge around its chevron when that spot is pointed at or tabbed to.
+  const empty =
+    units.length === 0 &&
+    agents.length === 0 &&
+    (topicsElsewhere || (!forYouShown && topics.length === 0 && moreTopics.length === 0));
+  /** What the chevron's row adds to the pill's height while it is there (empty, its room is always kept). */
+  const grownBy = widened && !empty ? CORNER_SIZE + RAIL_GAP_PX : 0;
 
   // What each label says, by the key of its unit.
   const labels = new Map<string, ReactNode>();
@@ -437,11 +446,14 @@ export function FactoryPill({
   const cardSize = cardShown ? sizes.card : null;
   const cardTop = cardSize ? centred(cardSize.h) : railTop;
   const ready = sizes.stage > 0 && sizes.rail !== null;
+  // Empty and at rest, the shapes wait past the edge; they slide out when the spot is pointed at.
+  const tuckedAway = empty && !widened && !cardShown;
+  const past = WALL_PX + (tuckedAway ? TUCKED_PX : 0);
   const pill: Box =
     cardOpen && cardSize
       ? { right: -WALL_PX, top: cardTop, w: cardSize.w + WALL_PX, h: cardSize.h, r: CARD_RADIUS }
       : {
-          right: -WALL_PX,
+          right: -past,
           top: railTop,
           w: PILL_WIDTH_PX + WALL_PX,
           h: railH,
@@ -449,7 +461,7 @@ export function FactoryPill({
         };
   // One pixel past the edge, so the wall itself never shows: only where the goo joins it to the pill.
   const wall: Box = {
-    right: -WALL_PX - 1,
+    right: -past - 1,
     top: pill.top - WALL_REACH_PX,
     w: WALL_PX,
     h: pill.h + 2 * WALL_REACH_PX,
@@ -479,6 +491,7 @@ export function FactoryPill({
       ref={stageRef}
       data-testid="factory-pill"
       data-open={cardOpen ? 'true' : 'false'}
+      data-empty={empty ? 'true' : 'false'}
       className="z-20"
       // Placed inline, as the dock's stage is: the boxes below are measured from these edges.
       style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: 0, pointerEvents: 'none' }}
@@ -665,8 +678,8 @@ export function FactoryPill({
           <span
             className="flex items-center justify-center"
             style={{
-              height: widened ? CORNER_SIZE : 0,
-              marginTop: widened ? 0 : -RAIL_GAP_PX,
+              height: widened || empty ? CORNER_SIZE : 0,
+              marginTop: widened || empty ? 0 : -RAIL_GAP_PX,
               opacity: widened ? 1 : 0,
               transform: widened || reduced ? 'none' : 'translateY(-8px) scale(0.6)',
               pointerEvents: widened ? 'auto' : 'none',
