@@ -319,6 +319,35 @@ describe('NewHome', () => {
     );
   });
 
+  it('finds a space by name from the Spaces line, whatever group it is in, and Escape brings the groups back', async () => {
+    await click(button(rail(), 'Open the sidebar'));
+    const rows = () =>
+      ['rig-ops', 'b-launch'].filter((id) => rail().querySelector(`[data-rail-id="${id}"]`));
+    const all = rows();
+    expect(all).toEqual(['rig-ops', 'b-launch']);
+    await click(button(rail(), 'Find a space'));
+    const field = () => rail().querySelector<HTMLInputElement>('input[aria-label="Find a space"]');
+    const typeIn = async (text: string) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field()!, text);
+        field()!.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await flush();
+    };
+    expect(document.activeElement).toBe(field());
+    await typeIn('LAUNCH');
+    expect(rows()).toEqual(['b-launch']);
+    await typeIn('no such space');
+    expect(rows()).toEqual([]);
+    expect(rail().textContent).toContain('No space has “no such space” in its name.');
+    await act(async () => {
+      field()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await flush();
+    expect(field()).toBeNull();
+    expect(rows()).toEqual(all);
+  });
+
   it('you and Settings sit at the foot of the rail', async () => {
     await click(rail().querySelector('[aria-label="Dylan Bourgeois, your account"]'));
     await click(button(rail(), 'Settings'));

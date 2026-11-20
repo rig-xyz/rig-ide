@@ -1,4 +1,4 @@
-import { Home as HomeIcon, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
+import { Home as HomeIcon, PanelLeftClose, PanelLeftOpen, Search, Settings, X } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { NewSpaceCta } from '@renderer/features/home/new-space-cta';
 import { startSpaceSetup } from '@renderer/features/spaces/space-setup-store';
@@ -8,6 +8,7 @@ import { cn } from '@renderer/lib/utils';
 import { Count, Face, IconButton, SessionMatrix, StatusWord } from './bits';
 import { useHome } from './home-context';
 import { type RailSession, type RailSpace, sessionLabelTone, sessionStatusWord } from './model';
+import { findSpaces } from './rail-data';
 import { SPACE_DRAG_TYPE, SpaceGroups } from './rail-groups';
 import { needsYouPhrase } from './say';
 import { useFactoryOverview, type SpaceFactory } from './use-factory-overview';
@@ -48,6 +49,14 @@ export function Rail({
     if (!collapsed) setPeek(null);
   }, [collapsed]);
 
+  // Finding a space by name: null while the field is closed. Folded to icons, there is no field.
+  const [query, setQuery] = useState<string | null>(null);
+  useEffect(() => {
+    if (collapsed) setQuery(null);
+  }, [collapsed]);
+  const finding = !collapsed && query !== null && query.trim() !== '';
+  const found = finding ? findSpaces(spaces, query) : [];
+
   // A landing entry scrolls into view so the pulse is seen.
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -86,6 +95,20 @@ export function Rail({
     if (space.root && session.origin === 'real') openInApp({ space, session });
     else open({ kind: 'session', id: session.id });
   };
+
+  const renderSpace = (space: RailSpace) => (
+    <SpaceEntry
+      key={space.id}
+      space={space}
+      collapsed={collapsed}
+      selected={selected}
+      landed={state.landed}
+      factory={space.bindingId ? factories.get(space.bindingId) : undefined}
+      onOpenSpace={() => openSpace(space)}
+      onOpenSession={(session) => openSession(space, session)}
+      onPeek={showPeek}
+    />
+  );
 
   return (
     <nav
@@ -159,29 +182,56 @@ export function Rail({
           collapsed ? 'justify-items-center px-2.5' : 'grid-cols-[minmax(0,1fr)] px-3'
         )}
       >
-        {!collapsed && (
-          <div className="flex h-[22px] items-center gap-1.5 py-1 pl-2.5 font-mono text-kicker font-medium tracking-[0.1em] whitespace-nowrap text-text-muted uppercase">
-            Spaces
-            <span className="tracking-normal text-text-muted/70">{spaces.length}</span>
-          </div>
+        {!collapsed &&
+          (query === null ? (
+            // Its magnifier sits over the groups' own buttons below (their "×"), the same size.
+            <div className="flex h-7 items-center gap-1.5 pr-1 pl-2.5 font-mono text-kicker font-medium tracking-[0.1em] whitespace-nowrap text-text-muted uppercase">
+              Spaces
+              <span className="tracking-normal text-text-muted/70">{spaces.length}</span>
+              <IconButton
+                label="Find a space"
+                onClick={() => setQuery('')}
+                className="ml-auto size-6"
+              >
+                <Search className="size-[14px]" strokeWidth={1.6} />
+              </IconButton>
+            </div>
+          ) : (
+            // Its magnifier and its text line up with the rows' "#" and names below.
+            <div className="flex h-7 items-center gap-2.5 rounded-control border border-border-hairline bg-bg-1 pr-[3px] pl-[9px] focus-within:border-accent">
+              <Search className="size-[15px] shrink-0 text-text-muted" strokeWidth={1.6} />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setQuery(null);
+                  if (e.key === 'Enter' && found[0]) {
+                    setQuery(null);
+                    openSpace(found[0]);
+                  }
+                }}
+                placeholder="Find a space"
+                aria-label="Find a space"
+                className="h-full min-w-0 flex-1 bg-transparent text-ui text-text-primary outline-none placeholder:text-text-muted"
+              />
+              <IconButton label="Close the search" onClick={() => setQuery(null)} className="size-6">
+                <X className="size-3.5" strokeWidth={1.8} />
+              </IconButton>
+            </div>
+          ))}
+        {finding ? (
+          <>
+            {found.map(renderSpace)}
+            {found.length === 0 && (
+              <p className="px-2.5 pt-2 text-meta text-text-muted">
+                No space has “{query.trim()}” in its name.
+              </p>
+            )}
+          </>
+        ) : (
+          <SpaceGroups spaces={spaces} collapsed={collapsed} renderSpace={renderSpace} />
         )}
-        <SpaceGroups
-          spaces={spaces}
-          collapsed={collapsed}
-          renderSpace={(space) => (
-            <SpaceEntry
-              key={space.id}
-              space={space}
-              collapsed={collapsed}
-              selected={selected}
-              landed={state.landed}
-              factory={space.bindingId ? factories.get(space.bindingId) : undefined}
-              onOpenSpace={() => openSpace(space)}
-              onOpenSession={(session) => openSession(space, session)}
-              onPeek={showPeek}
-            />
-          )}
-        />
         {collapsed && quietCount > 0 && (
           <button
             type="button"

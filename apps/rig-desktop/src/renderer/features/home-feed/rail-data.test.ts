@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { demoSpaces } from './mock';
 import { sessionMatrix } from './model';
-import { mergeRail, orderSpacesByActivity, realSpaceToRail, runToSession } from './rail-data';
+import {
+  findSpaces,
+  mergeRail,
+  orderSpacesByActivity,
+  realSpaceToRail,
+  runToSession,
+} from './rail-data';
 
 const NOW = Date.parse('2026-10-21T09:00:00Z');
 
@@ -237,5 +243,25 @@ describe('orderSpacesByActivity', () => {
       { space: space('just-started', NOW - 1000), madeAt: NOW - 60 * 86_400_000 },
     ]);
     expect(order.map((s) => s.id)).toEqual(['just-started', 'made-recently', 'worked-an-hour-ago']);
+  });
+});
+
+describe('findSpaces', () => {
+  const spaces = [{ name: 'warm-island' }, { name: 'Acme bug fixes' }, { name: 'x-factory' }];
+  const names = (query: string) => findSpaces(spaces, query).map((s) => s.name);
+
+  it('finds a space by any part of its name, whatever the case', () => {
+    expect(names('ISL')).toEqual(['warm-island']);
+    expect(names('fac')).toEqual(['x-factory']);
+  });
+
+  it('takes every word typed, and a space for a dash', () => {
+    expect(names('warm island')).toEqual(['warm-island']);
+    expect(names('bug acme')).toEqual(['Acme bug fixes']);
+    expect(names('acme island')).toEqual([]);
+  });
+
+  it('gives every space back, in order, when nothing is typed', () => {
+    expect(names('  ')).toEqual(['warm-island', 'Acme bug fixes', 'x-factory']);
   });
 });

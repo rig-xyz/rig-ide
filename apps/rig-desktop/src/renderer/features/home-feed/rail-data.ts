@@ -263,3 +263,17 @@ export function mergeRail(
     return added?.length ? { ...s, sessions: [...added, ...s.sessions] } : s;
   });
 }
+
+/**
+ * The spaces whose name holds every word of what was typed, in the order given. Case is ignored,
+ * and so is the difference between a space and a dash ("warm island" finds #warm-island).
+ */
+export function findSpaces<T extends { name: string }>(spaces: readonly T[], query: string): T[] {
+  const plain = (text: string) => text.toLowerCase().replace(/[-_\s]+/g, ' ').trim();
+  const words = plain(query).split(' ').filter(Boolean);
+  if (words.length === 0) return [...spaces];
+  return spaces.filter((space) => {
+    const name = plain(space.name);
+    return words.every((word) => name.includes(word));
+  });
+}
