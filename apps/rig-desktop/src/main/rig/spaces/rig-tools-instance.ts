@@ -185,6 +185,7 @@ const backend: RigToolsBackend = {
       const roots = await resolveLocalPathsImpl(spaces.map((b) => b.id)).catch(() => ({}) as Record<string, string>);
       return ok(spaces.map((b) => ({ bindingId: b.id, name: b.name, root: roots[b.id] ?? null })));
     },
+    createSpace: async (name) => (await import('../orch/instance')).makeSpace(name),
   },
   orch: {
     query: async (input) => (await import('../orch/instance')).orchActions.query(input),

@@ -16,7 +16,7 @@ import { rigAccountController } from '../account';
 import { globalSetup } from '../connectors/connections-instance';
 import * as feedRelay from '../feed/relay';
 import { getRecentThemes } from '../recent-themes';
-import { resolveLocalPathsImpl } from '../recent-rigs';
+import { recordRigOpened, resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSpaceStatusController } from '../space-status';
 import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
@@ -27,7 +27,7 @@ import { createSender } from './send';
 import { rigSpaceSetupController } from '../space-setup';
 import { rigSettingsStore } from '../settings-instance';
 import { createHomeSpace } from './home-space';
-import { resolveSelfUserId } from '../account';
+import { getCurrentAccountId, resolveSelfUserId } from '../account';
 import { createOrchestrator, FIRST_RUN, type RunFail } from './agent';
 import { createCatchUp, readWindow } from './catch-up';
 import { runGhRead, runGhWrite } from './github';
@@ -96,14 +96,36 @@ async function listSpaces() {
   return ok(spaces.map((b) => ({ bindingId: b.id, name: b.name, root: roots[b.id] ?? null })));
 }
 
+/**
+ * A space made here may never be opened in the window, and opening is what puts a space on this
+ * Mac's own list (`recordRigOpened`). A session can only be saved under a space on that list, so
+ * the new space goes on it now: the work started in it shows under its Sessions like any other.
+ */
+async function recordSpaceMade(bindingId: string, path: string, name: string): Promise<void> {
+  try {
+    const current = await getCurrentAccountId();
+    await recordRigOpened({
+      path,
+      bindingId,
+      name,
+      accountId: current.status === 'known' ? current.id : current.status === 'signedOut' ? null : undefined,
+    });
+  } catch (error) {
+    log.warn('Rig orch: could not record a space it made', { bindingId, error: String(error) });
+  }
+}
+
 /** Makes a space the way the app's own New space does, and waits until it's live (or failed). */
-async function makeSpace(name: string): Promise<Result<{ bindingId: string; root: string }, string>> {
+export async function makeSpace(name: string): Promise<Result<{ bindingId: string; root: string }, string>> {
   const started = await rigSpaceSetupController.start({ name });
   if (!started.success) return err(started.error.message);
   const id = started.data.id;
   for (let waited = 0; waited < 180_000; waited += 1000) {
     const setup = (await rigSpaceSetupController.list()).find((x) => x.id === id);
-    if (setup?.status === 'live' && setup.bindingId) return ok({ bindingId: setup.bindingId, root: setup.path });
+    if (setup?.status === 'live' && setup.bindingId) {
+      await recordSpaceMade(setup.bindingId, setup.path, setup.name);
+      return ok({ bindingId: setup.bindingId, root: setup.path });
+    }
     if (!setup || setup.status === 'failed') return err(setup?.error?.message ?? 'Setting up the space failed.');
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }

@@ -1400,7 +1400,9 @@ describe('the four primitives', () => {
         },
       });
       const run = (input: Record<string, unknown>) => runRigTool(backend, tool(backend, 'rig_nav'), HOME, input);
-      return { run, backend, renameSpace, layout: () => layout };
+      const createSpace = vi.fn(async (_name: string) => ok({ bindingId: 'b9', root: '/rigs/b9' }));
+      backend.homeNav!.createSpace = createSpace;
+      return { run, backend, renameSpace, createSpace, layout: () => layout };
     }
 
     it('lists the groups with their spaces by name', async () => {
@@ -1429,6 +1431,26 @@ describe('the four primitives', () => {
       expect(n.layout().groups.map((g) => g.name)).toEqual(['Acme', 'Content', 'Ops']);
       expect((await n.run({ action: 'move_group', group: 'Ops' })).isError).toBe(true);
       expect((await n.run({ action: 'move_group', group: 'Missing', position: 1 })).isError).toBe(true);
+    });
+
+    it('makes a space, in a group when one is named, and says how to start work in it', async () => {
+      const n = nav();
+      const made = await n.run({ action: 'create_space', name: 'Support Dashboard', group: 'acme' });
+      expect(n.createSpace).toHaveBeenCalledWith('Support Dashboard');
+      expect(made.text).toBe(
+        'Made the space #support-dashboard (space_b9), in the group "Acme". Only your owner is in it. To start work there, call rig_start with space "space_b9".'
+      );
+      expect(n.layout().groups[0]!.spaces).toEqual(['b1', 'b9']);
+    });
+
+    it('does not make a space with no name, a name already taken, or for a group that is not there', async () => {
+      const n = nav();
+      expect((await n.run({ action: 'create_space' })).isError).toBe(true);
+      expect((await n.run({ action: 'create_space', name: 'Bug Fixes' })).text).toContain('already has a space called #bug fixes (space_b1)');
+      expect((await n.run({ action: 'create_space', name: 'New', group: 'Missing' })).isError).toBe(true);
+      expect(n.createSpace).not.toHaveBeenCalled();
+      n.createSpace.mockResolvedValueOnce({ success: false, error: 'Setting up the space failed.' } as never);
+      expect((await n.run({ action: 'create_space', name: 'New' })).text).toBe("Couldn't make the space: Setting up the space failed.");
     });
 
     it('refuses a space or a group it cannot find', async () => {

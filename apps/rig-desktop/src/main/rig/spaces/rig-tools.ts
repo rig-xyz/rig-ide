@@ -19,6 +19,7 @@ import {
   reactionsLabel,
   type MessageReaction,
 } from '@shared/spaces/reactions';
+import { rigSlug } from '@shared/rig/create';
 import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import type { RigCommentAnchor, RigCommentMessage } from '@shared/rig/comments';
 import type { RigFileNode } from '@shared/rig/files';
@@ -292,6 +293,8 @@ export interface RigToolsBackend {
     layout(): Promise<HomeLayout>;
     apply(action: HomeLayoutAction): Promise<HomeLayout>;
     spaces(): Promise<Result<{ bindingId: string; name: string; root: string | null }[], Failure>>;
+    /** Makes a new space on this Mac, as the app's New space does, and waits until it is live. Absent: this version can't. */
+    createSpace?(name: string): Promise<Result<{ bindingId: string; root: string }, string>>;
   };
   /** The control plane's four primitives (orch/actions.ts); absent when this version has none. */
   orch?: OrchPrimitives;
@@ -1519,13 +1522,13 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
     {
       name: NAV_TOOL,
       description:
-        "List or change how your owner's spaces are grouped in Home's left-hand list, and rename a space. Use it when they ask to see, group, move, sort out or rename their spaces. action: list (the groups in the order they show, and which spaces are in each); create_group (name, optional spaces); rename_group (group, name); delete_group (group; its spaces go back to Ungrouped); move_group (group, position: where it goes in the list of groups, 1 is the top); move (spaces, group; leave group out to ungroup them); rename_space (spaces: one ref, name). " +
+        "List or change how your owner's spaces are grouped in Home's left-hand list, rename a space, and make a new space. Use it when they ask to see, group, move, sort out or rename their spaces, or to make a space. action: list (the groups in the order they show, and which spaces are in each); create_group (name, optional spaces); rename_group (group, name); delete_group (group; its spaces go back to Ungrouped); move_group (group, position: where it goes in the list of groups, 1 is the top); move (spaces, group; leave group out to ungroup them); rename_space (spaces: one ref, name); create_space (name; optional group to put it in): makes a new space with only your owner in it and returns its ref, which rig_start takes as its space. " +
         'A group is named by its current name; a space by its ref from rig_query spaces (space_…). Groups are only how their own list is arranged: nobody else sees them. Renaming a space shows for everyone in it, so do it only when they asked for that name.',
       inputSchema: {
-        action: z.enum(['list', 'create_group', 'rename_group', 'delete_group', 'move_group', 'move', 'rename_space']),
+        action: z.enum(['list', 'create_group', 'rename_group', 'delete_group', 'move_group', 'move', 'rename_space', 'create_space']),
         group: z.string().optional().describe("A group's current name."),
         position: z.number().int().min(1).optional().describe('For move_group: the place the group takes among the groups, counting from 1 at the top.'),
-        name: z.string().optional().describe('The new name (of a group, or of a space).'),
+        name: z.string().optional().describe('The new name (of a group, or of a space). For create_space: a short name that says what the space is for.'),
         spaces: z.array(z.string()).optional().describe('Space refs (space_…) from rig_query spaces.'),
       },
       annotations: { title: 'Arrange your spaces', readOnlyHint: false, destructiveHint: false },
@@ -1614,7 +1617,24 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
           if (!renamed.success) return failed(`Couldn't rename the space: ${renamed.error.message}`);
           return { text: `Renamed #${space.name} to "${renamed.data.name}". Everyone in it will see the new name.` };
         }
-        return failed('Unknown action. Use list, create_group, rename_group, delete_group, move_group, move or rename_space.');
+        if (action === 'create_space') {
+          if (!nav.createSpace) return failed("This version of Rig can't make a space from here.");
+          if (!name) return failed('The space needs a name: a few words for what it is for.');
+          if (name.length > SPACE_NAME_MAX) return failed(`That name is ${name.length} characters; keep it to ${SPACE_NAME_MAX} or fewer.`);
+          const slug = rigSlug(name);
+          if (!slug) return failed('The name needs at least one letter or number.');
+          const taken = all.data.find((s) => rigSlug(s.name) === slug);
+          if (taken) return failed(`Your owner already has a space called #${taken.name} (space_${taken.bindingId}). Use it, or give the new space another name.`);
+          const group = groupName ? findGroup(groupName) : null;
+          if (groupName && !group) return failed(`No single group is called "${groupName}". Make it first with create_group, or leave group out.`);
+          const made = await nav.createSpace(name);
+          if (!made.success) return failed(`Couldn't make the space: ${made.error}`);
+          if (group) await nav.apply({ type: 'moveSpace', bindingId: made.data.bindingId, groupId: group.id });
+          return {
+            text: `Made the space #${slug} (space_${made.data.bindingId})${group ? `, in the group "${group.name}"` : ''}. Only your owner is in it. To start work there, call rig_start with space "space_${made.data.bindingId}".`,
+          };
+        }
+        return failed('Unknown action. Use list, create_group, rename_group, delete_group, move_group, move, rename_space or create_space.');
       },
     },
     {
