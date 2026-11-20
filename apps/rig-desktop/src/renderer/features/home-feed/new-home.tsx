@@ -118,8 +118,8 @@ function HomeLayout({
       {folded && (
         <FeedDock
           onLayout={setDockWidth}
-          onOpen={(itemId) => {
-            setFocusId(itemId ?? null);
+          onOpen={() => {
+            setFocusId(null);
             dispatch({ type: 'collapse-feed', value: false });
           }}
         />
