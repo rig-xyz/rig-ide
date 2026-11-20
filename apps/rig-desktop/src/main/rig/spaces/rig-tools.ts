@@ -1519,11 +1519,12 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
     {
       name: NAV_TOOL,
       description:
-        "List or change how your owner's spaces are grouped in Home's left-hand list, and rename a space. Use it when they ask to see, group, move, sort out or rename their spaces. action: list (the groups and which spaces are in each); create_group (name, optional spaces); rename_group (group, name); delete_group (group; its spaces go back to Ungrouped); move (spaces, group; leave group out to ungroup them); rename_space (spaces: one ref, name). " +
+        "List or change how your owner's spaces are grouped in Home's left-hand list, and rename a space. Use it when they ask to see, group, move, sort out or rename their spaces. action: list (the groups in the order they show, and which spaces are in each); create_group (name, optional spaces); rename_group (group, name); delete_group (group; its spaces go back to Ungrouped); move_group (group, position: where it goes in the list of groups, 1 is the top); move (spaces, group; leave group out to ungroup them); rename_space (spaces: one ref, name). " +
         'A group is named by its current name; a space by its ref from rig_query spaces (space_…). Groups are only how their own list is arranged: nobody else sees them. Renaming a space shows for everyone in it, so do it only when they asked for that name.',
       inputSchema: {
-        action: z.enum(['list', 'create_group', 'rename_group', 'delete_group', 'move', 'rename_space']),
+        action: z.enum(['list', 'create_group', 'rename_group', 'delete_group', 'move_group', 'move', 'rename_space']),
         group: z.string().optional().describe("A group's current name."),
+        position: z.number().int().min(1).optional().describe('For move_group: the place the group takes among the groups, counting from 1 at the top.'),
         name: z.string().optional().describe('The new name (of a group, or of a space).'),
         spaces: z.array(z.string()).optional().describe('Space refs (space_…) from rig_query spaces.'),
       },
@@ -1581,6 +1582,15 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
           const after = await nav.apply({ type: 'renameGroup', id: group.id, name });
           return { text: `Renamed the group "${group.name}" to "${name}".\n${describe(after)}` };
         }
+        if (action === 'move_group') {
+          const group = findGroup(groupName);
+          if (!group) return failed(`No single group is called "${groupName}". Use action list to see them.`);
+          const position = Number(input.position);
+          if (!Number.isInteger(position) || position < 1) return failed('Give the position the group takes, counting from 1 at the top.');
+          const toIndex = Math.min(position, layout.groups.length) - 1;
+          const after = await nav.apply({ type: 'reorderGroup', id: group.id, toIndex });
+          return { text: `Moved the group "${group.name}" to place ${toIndex + 1} of ${after.groups.length}.\n${describe(after)}` };
+        }
         if (action === 'move') {
           if (ids.length === 0) return failed('Say which spaces to move (refs from rig_query spaces).');
           const group = groupName ? findGroup(groupName) : null;
@@ -1604,7 +1614,7 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
           if (!renamed.success) return failed(`Couldn't rename the space: ${renamed.error.message}`);
           return { text: `Renamed #${space.name} to "${renamed.data.name}". Everyone in it will see the new name.` };
         }
-        return failed('Unknown action. Use list, create_group, rename_group, delete_group, move or rename_space.');
+        return failed('Unknown action. Use list, create_group, rename_group, delete_group, move_group, move or rename_space.');
       },
     },
     {

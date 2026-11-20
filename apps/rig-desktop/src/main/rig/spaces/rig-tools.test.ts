@@ -1418,6 +1418,19 @@ describe('the four primitives', () => {
       expect(n.layout().groups.map((g) => g.name)).toEqual(['Acme']);
     });
 
+    it('moves a group to a place in the list, and past the end means last', async () => {
+      const n = nav();
+      await n.run({ action: 'create_group', name: 'Content' });
+      await n.run({ action: 'create_group', name: 'Ops' });
+      const top = await n.run({ action: 'move_group', group: 'ops', position: 1 });
+      expect(top.text).toContain('Moved the group "Ops" to place 1 of 3.');
+      expect(n.layout().groups.map((g) => g.name)).toEqual(['Ops', 'Acme', 'Content']);
+      await n.run({ action: 'move_group', group: 'Ops', position: 9 });
+      expect(n.layout().groups.map((g) => g.name)).toEqual(['Acme', 'Content', 'Ops']);
+      expect((await n.run({ action: 'move_group', group: 'Ops' })).isError).toBe(true);
+      expect((await n.run({ action: 'move_group', group: 'Missing', position: 1 })).isError).toBe(true);
+    });
+
     it('refuses a space or a group it cannot find', async () => {
       const n = nav();
       expect((await n.run({ action: 'move', spaces: ['space_nope'], group: 'Acme' })).isError).toBe(true);

@@ -14,12 +14,14 @@ import type { RailSpace } from './model';
  * The rail's spaces in your groups: the same groups as the Spaces card on
  * the current Home (`@shared/rig/home-layout`, kept on your account), so
  * both Homes show one arrangement. A group folds under its header; drag a
- * space onto a header to move it there; double-click a group's name to
- * rename it. Spaces only the Feed knows about (the preview's demo ones)
+ * space onto a header to move it there; drag a group's header onto another
+ * group's to put it in that place; double-click a group's name to rename it. Spaces only the Feed knows about (the preview's demo ones)
  * have no binding and sit in Ungrouped.
  */
 
 export const SPACE_DRAG_TYPE = 'application/x-rig-space';
+/** A group's header being dragged to another place in the list; its data is the group's id. */
+const GROUP_DRAG_TYPE = 'application/x-rig-space-group';
 
 type Row = { bindingId: string; name: string; space: RailSpace };
 
@@ -126,6 +128,14 @@ export function SpaceGroups({
                 setDropOn(null);
                 dispatch({ type: 'moveSpace', bindingId, groupId: section.groupId ?? null });
               }}
+              groupId={section.groupId}
+              onDropGroup={(id) => {
+                setDropOn(null);
+                // The dragged group takes this group's place, as on the Spaces card.
+                const toIndex = layout.groups.findIndex((g) => g.id === section.groupId);
+                if (id !== section.groupId && toIndex >= 0)
+                  dispatch({ type: 'reorderGroup', id, toIndex });
+              }}
             />
           )}
           {!section.collapsed && section.rows.map((row) => renderSpace(row.space))}
@@ -163,6 +173,8 @@ function GroupHeader({
   canDrop,
   onDragState,
   onDropSpace,
+  groupId,
+  onDropGroup,
 }: {
   title: string;
   count: number;
@@ -177,25 +189,51 @@ function GroupHeader({
   canDrop: boolean;
   onDragState: (over: boolean) => void;
   onDropSpace: (bindingId: string) => void;
+  /** One of your own groups: its header can be dragged, and takes another group dropped on it. */
+  groupId?: string;
+  onDropGroup: (groupId: string) => void;
 }) {
-  const dropProps = canDrop
-    ? {
-        onDragOver: (e: React.DragEvent) => {
-          if (!e.dataTransfer.types.includes(SPACE_DRAG_TYPE)) return;
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
-          onDragState(true);
-        },
-        onDragLeave: () => onDragState(false),
-        onDrop: (e: React.DragEvent) => {
-          const id = e.dataTransfer.getData(SPACE_DRAG_TYPE);
-          if (id) onDropSpace(id);
-        },
-      }
-    : {};
+  const takes = (e: React.DragEvent) =>
+    (canDrop && e.dataTransfer.types.includes(SPACE_DRAG_TYPE)) ||
+    (!!groupId && e.dataTransfer.types.includes(GROUP_DRAG_TYPE));
+  const dropProps =
+    canDrop || groupId
+      ? {
+          onDragOver: (e: React.DragEvent) => {
+            if (!takes(e)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            onDragState(true);
+          },
+          // Crossing onto the header's own name or count is not leaving it.
+          onDragLeave: (e: React.DragEvent) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onDragState(false);
+          },
+          onDrop: (e: React.DragEvent) => {
+            if (!takes(e)) return;
+            e.preventDefault();
+            const group = e.dataTransfer.getData(GROUP_DRAG_TYPE);
+            const space = e.dataTransfer.getData(SPACE_DRAG_TYPE);
+            if (group) onDropGroup(group);
+            else if (space) onDropSpace(space);
+            else onDragState(false);
+          },
+        }
+      : {};
   return (
     <div
       {...dropProps}
+      draggable={groupId && !renaming ? true : undefined}
+      onDragStart={
+        groupId
+          ? (e) => {
+              e.dataTransfer.setData(GROUP_DRAG_TYPE, groupId);
+              e.dataTransfer.effectAllowed = 'move';
+            }
+          : undefined
+      }
+      onDragEnd={groupId ? () => onDragState(false) : undefined}
+      data-rail-group={groupId}
       className={cn(
         'group/header mt-2.5 flex h-7 items-center rounded-[8px] pr-1 transition-[background-color,box-shadow]',
         dropping && 'bg-accent-subtle shadow-[inset_0_0_0_1px_var(--accent)]'
