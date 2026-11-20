@@ -123,14 +123,18 @@ The tabs, and what you may change about them:
 
 ## Keeping it fresh on a schedule
 
-A view refreshes itself when its `view.json` has both:
+A view refreshes itself when its `view.json` says when and in whose session:
 
-- `"every"`: how old the data may get, as `"30m"`, `"2h"` or `"1d"` (5 minutes at least).
-- `"runs_as"`: the relay id (`usr_…`) of the member whose session does the refresh. That is your owner: the rules of this session give their id. It runs only in their Rig app, while it is open.
+- When, one of:
+  - `"every"`: how old the data may get, as `"30m"`, `"2h"` or `"1d"` (5 minutes at least). Use it for "keep this fresh".
+  - `"at"`: a set time, for "every Friday at 3pm" or "each morning at 9". Write the days, then the time on a 24-hour clock: `"fri 15:00"`, `"mon,wed,fri 09:00"`, `"weekdays 09:00"`, or `"09:00"` alone for every day. Add `"tz"` with the zone the person meant (`"America/New_York"` for "3pm EST"); without it, the time is read on the clock of the Mac that runs it. Add `"from": "2026-11-27"` when it should not start before a day ("starting next week"). With `"at"`, leave `"every"` out.
+- `"runs_as"`: the relay id (`usr_…`) of the member whose session does the refresh. That is your owner: the rules of this session give their id. It runs only in their Rig app, while it is open; a set time that passed while the app was closed runs when it opens.
 
-When the data is older than that, Rig starts a turn in that member's session with `"refresh"` as the request, so write `"refresh"` as a full instruction to your future self: what to read, what to keep, what never to do. Leave `every` and `runs_as` out and the view is refreshed only when someone asks.
+When the data is older than `every`, or the time in `at` has come, Rig starts a turn in that member's session with `"refresh"` as the request, so write `"refresh"` as a full instruction to your future self: what to read, what to keep, what never to do. Leave the schedule out and the view is refreshed only when someone asks.
 
-A view that carries standing work starts on a schedule (the `rig-factory` skill, "Before you finish the first session", says when that is safe to do unasked and which cadence). Any other view goes on a schedule only on the person's call. Either way the choice lives on the page, not in chat: a card above the rest with the current or suggested cadence first and the real alternatives ("Keep every 2 hours" / "Every hour" / "Daily" / "Only when I ask"; see `ask` in `templates/review-queue.json`). When the person chooses, write `every` and `runs_as` into `view.json` (nothing for "Only when I ask"), remove the card from the data, and say what you set in one line.
+This is the only place a schedule lives. Rig shows it on the view's tab (how often or at what time, and when it is next) and everyone in the space can see it and stop it. Never set up a schedule outside Rig (launchd, cron, a calendar event, a reminder), even when the person asks for a day and time: write `"at"`. If what they ask for cannot be written here (say, the last day of each month), tell them what can, and do not go around Rig.
+
+A view that carries standing work starts on a schedule (the `rig-factory` skill, "Before you finish the first session", says when that is safe to do unasked and which cadence). Any other view goes on a schedule only on the person's call. Either way the choice lives on the page, not in chat: a card above the rest with the current or suggested cadence first and the real alternatives ("Keep every 2 hours" / "Every hour" / "Daily" / "Only when I ask"; see `ask` in `templates/review-queue.json`). When the person chooses, write `every` (or `at`) and `runs_as` into `view.json` (nothing for "Only when I ask"), remove the card from the data, and say what you set in one line.
 
 ## Who is looking
 

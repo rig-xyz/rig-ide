@@ -112,6 +112,7 @@ export function createViewRefresher(deps: ViewRefreshDeps) {
       parsed.map(({ view, schedule, accepted }) => ({
         name: view.name,
         everyMs: schedule?.everyMs ?? null,
+        at: schedule?.at ?? null,
         runsAs: schedule?.runsAs ?? null,
         dataModifiedMs: view.dataModifiedMs,
         lastStartedMs: lastStarted.get(`${space.bindingId}/${view.name}`) ?? null,
@@ -142,6 +143,7 @@ export function createViewRefresher(deps: ViewRefreshDeps) {
             const now = deps.now();
             const due = isViewRefreshDue({
               everyMs: schedule.everyMs,
+              at: schedule.at,
               dataModifiedMs: view.dataModifiedMs,
               lastStartedMs: lastStarted.get(key) ?? null,
               now,
@@ -185,7 +187,7 @@ export function createViewRefresher(deps: ViewRefreshDeps) {
     },
 
     /** This Mac's person agrees to a view's schedule as it stands: by accepting it, or by running it themselves. */
-    accept(bindingId: string, view: string, schedule: Pick<ViewSchedule, 'everyMs' | 'refresh'>): void {
+    accept(bindingId: string, view: string, schedule: Pick<ViewSchedule, 'everyMs' | 'refresh'> & { at?: ViewSchedule['at'] }): void {
       consent.set(`${bindingId}/${view}`, viewScheduleSignature(schedule));
     },
 

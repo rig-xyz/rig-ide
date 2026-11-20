@@ -95,6 +95,24 @@ describe('words', () => {
     expect(ago(NOW - 2 * H, NOW)).toBe('2 h ago');
     expect(ago(NOW - 72 * H, NOW)).toBe('3 d ago');
   });
+  it('everyInWords, for a set time: the days and the hour, on this clock', () => {
+    const DAY = 24 * H;
+    const set = (days: number[] | null, minute: number) => ({ days, minute, tz: null, fromMs: null });
+    expect(everyInWords(7 * DAY, set([5], 15 * 60), NOW)).toBe('every Friday at 15:00');
+    expect(everyInWords(DAY, set(null, 9 * 60), NOW)).toBe('every day at 09:00');
+    expect(everyInWords(3 * DAY, set([1, 2, 3, 4, 5], 9 * 60), NOW)).toBe('every weekday at 09:00');
+    expect(everyInWords(3 * DAY, set([0, 1, 3], 9 * 60 + 30), NOW)).toBe('every Mon, Wed and Sun at 09:30');
+    // Before its first day, it still says the day it runs on.
+    expect(everyInWords(7 * DAY, { ...set([5], 15 * 60), fromMs: NOW + 30 * DAY }, NOW)).toBe('every Friday at 15:00');
+  });
+  it('a view on a set time says it in its tooltip, with when it is next', () => {
+    const friday = { days: [5], minute: 15 * 60, tz: null, fromMs: null };
+    const s = row({
+      manifest: manifest({ everyMs: 7 * 24 * H, at: friday }),
+      work: work({ everyMs: 7 * 24 * H, at: friday, nextDueAt: at(15, 0, 20) }),
+    });
+    expect(s.tooltip).toBe('Updated 5 min ago. Refreshes every Friday at 15:00, next in 7 days.');
+  });
   it('everyInWords', () => {
     expect(everyInWords(30 * MIN)).toBe('every 30 min');
     expect(everyInWords(60 * MIN)).toBe('every hour');

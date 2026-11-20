@@ -144,7 +144,7 @@ Rig draws the tab list (and will draw notifications) from what the view declares
 
 - `kind` picks the tab's icon: `queue`, `board`, `intake`, `feed`, `prs`, `tracker`, or `page` for anything else. Use exactly these words, not the template's file name: `review-queue.html` is `queue`, `prs.html` is `prs`, `board.html` is `board`, `intake.html` is `intake`, `feed.html` is `feed`, `tracker.html` is `tracker`. (Rig also accepts `review-queue`, but write `queue`.)
 - `title` is the tab's name. Two or three words.
-- `every`, `runs_as`, `refresh`: the schedule (SKILL.md, "Keeping it fresh on a schedule"). Write them when the person picks a schedule on the page's schedule card, not before.
+- `every` (or `at`, with `tz` and `from`, for a set day and time), `runs_as`, `refresh`: the schedule (SKILL.md, "Keeping it fresh on a schedule"). Write them when the person picks a schedule on the page's schedule card, not before.
 
 **`"tab"` at the top of `data.json`**, rewritten with the data on every refresh:
 

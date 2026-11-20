@@ -17,6 +17,7 @@ import {
   viewRefreshPrompt,
   viewMetasWrittenBy,
   viewScheduleSignature,
+  viewAtNextMs,
 } from './views';
 
 const file = (relPath: string): RigFileNode => ({
@@ -155,6 +156,7 @@ describe('readViewManifest', () => {
       updatedMs: 1_000,
       every: '30m',
       everyMs: 30 * 60_000,
+      at: null,
     });
   });
   it('takes a count per person, and the old badge name', () => {
@@ -251,6 +253,95 @@ describe('viewScheduleSignature', () => {
   });
 });
 
+describe('a schedule at a set time', () => {
+  const DAY = 86_400_000;
+  const NY = 'America/New_York';
+  const schedule = (meta: object) => parseViewSchedule(JSON.stringify({ runs_as: 'usr_a', ...meta }));
+  const friday3pm = schedule({ at: 'fri 15:00', tz: NY })!.at!;
+
+  it('reads a day and a time, in a zone, with a week as its period', () => {
+    expect(schedule({ at: 'fri 15:00', tz: NY })).toEqual({
+      everyMs: 7 * DAY,
+      at: { days: [5], minute: 15 * 60, tz: NY, fromMs: null },
+      runsAs: 'usr_a',
+      refresh: null,
+    });
+  });
+  it('reads a time with no day as every day, in the zone of the Mac that runs it', () => {
+    expect(schedule({ at: '9:30' })).toMatchObject({
+      everyMs: DAY,
+      at: { days: null, minute: 9 * 60 + 30, tz: null },
+    });
+  });
+  it('reads the ways a day and a time get written', () => {
+    expect(schedule({ at: 'every Friday at 3pm', tz: NY })?.at).toEqual(friday3pm);
+    expect(schedule({ at: 'Fridays 3:00 PM', tz: NY })?.at).toEqual(friday3pm);
+    expect(schedule({ at: 'mon,wed,fri 09:00' })).toMatchObject({ everyMs: 3 * DAY, at: { days: [1, 3, 5] } });
+    expect(schedule({ at: 'weekdays 09:00' })).toMatchObject({ everyMs: 3 * DAY, at: { days: [1, 2, 3, 4, 5] } });
+    expect(schedule({ at: 'daily 12am' })?.at).toMatchObject({ days: null, minute: 0 });
+  });
+  it('is no schedule when the time, a day or the zone cannot be read, even with an interval beside it', () => {
+    expect(schedule({ at: 'soon', every: '1h' })).toBeNull();
+    expect(schedule({ at: 'fri 25:00' })).toBeNull();
+    expect(schedule({ at: 'someday 15:00' })).toBeNull();
+    expect(schedule({ at: 'fri 15:00', tz: 'Mars/Olympus' })).toBeNull();
+    expect(schedule({ at: 'fri 15:00', from: 'next week' })).toBeNull();
+    expect(parseViewSchedule(JSON.stringify({ at: 'fri 15:00' }))).toBeNull();
+  });
+  it('comes up the next time that day and hour arrive in its zone', () => {
+    // Set on Friday 2026-11-20 at 18:25 in New York (UTC-5): next is Friday the 27th at 15:00 there.
+    expect(viewAtNextMs(friday3pm, Date.UTC(2026, 10, 20, 23, 25))).toBe(Date.UTC(2026, 10, 27, 20, 0));
+    // That Friday morning, it is the same afternoon; at 15:00 sharp, the week after.
+    expect(viewAtNextMs(friday3pm, Date.UTC(2026, 10, 20, 15, 0))).toBe(Date.UTC(2026, 10, 20, 20, 0));
+    expect(viewAtNextMs(friday3pm, Date.UTC(2026, 10, 20, 20, 0))).toBe(Date.UTC(2026, 10, 27, 20, 0));
+  });
+  it('keeps the hour on the wall when the clocks change', () => {
+    // New York goes to UTC-4 on 2027-03-14: 15:00 is 20:00 UTC on the 12th and 19:00 UTC on the 19th.
+    expect(viewAtNextMs(friday3pm, Date.UTC(2027, 2, 12, 20, 0))).toBe(Date.UTC(2027, 2, 19, 19, 0));
+  });
+  it('does not come up before the day it starts from', () => {
+    const later = schedule({ at: 'fri 15:00', tz: NY, from: '2026-11-27' })!.at!;
+    // Set on Wednesday the 18th: Friday the 20th is skipped.
+    expect(viewAtNextMs(later, Date.UTC(2026, 10, 18, 17, 0))).toBe(Date.UTC(2026, 10, 27, 20, 0));
+    expect(viewNextDueMs({ everyMs: 7 * DAY, at: later, dataModifiedMs: null, lastStartedMs: null })).toBe(
+      Date.UTC(2026, 10, 27, 20, 0)
+    );
+  });
+  it('is due at its time, stays due when the time was missed, and then waits for the next', () => {
+    const spec = { everyMs: 7 * DAY, at: friday3pm, dataModifiedMs: Date.UTC(2026, 10, 20, 23, 25) };
+    const first = Date.UTC(2026, 10, 27, 20, 0);
+    expect(viewNextDueMs({ ...spec, lastStartedMs: null })).toBe(first);
+    expect(isViewRefreshDue({ ...spec, lastStartedMs: null, now: first - 1 })).toBe(false);
+    expect(isViewRefreshDue({ ...spec, lastStartedMs: null, now: first })).toBe(true);
+    // The app was closed on Friday December 4: it runs when opened on Saturday, then waits for the 11th.
+    const saturday = Date.UTC(2026, 11, 5, 18, 0);
+    expect(isViewRefreshDue({ ...spec, lastStartedMs: first, now: saturday })).toBe(true);
+    expect(viewNextDueMs({ ...spec, lastStartedMs: saturday })).toBe(Date.UTC(2026, 11, 11, 20, 0));
+  });
+  it('is due at once when it was never written or tried and has no start day', () => {
+    expect(viewNextDueMs({ everyMs: 7 * DAY, at: friday3pm, dataModifiedMs: null, lastStartedMs: null })).toBe(0);
+  });
+  it('is a new agreement when its time, day or zone changes, and leaves an interval\'s as it was', () => {
+    const sign = (meta: object) => viewScheduleSignature(schedule({ refresh: 'Draft.', ...meta })!);
+    const base = sign({ at: 'fri 15:00', tz: NY });
+    expect(sign({ at: 'Friday 3pm', tz: NY, title: 'Renamed' })).toBe(base);
+    expect(sign({ at: 'fri 16:00', tz: NY })).not.toBe(base);
+    expect(sign({ at: 'thu 15:00', tz: NY })).not.toBe(base);
+    expect(sign({ at: 'fri 15:00', tz: 'Europe/Paris' })).not.toBe(base);
+    expect(sign({ every: '1h' })).toBe('3600000\nDraft.');
+  });
+  it('shows in the manifest', () => {
+    const manifest = readViewManifest({
+      name: 'support',
+      meta: JSON.stringify({ at: 'fri 15:00', tz: NY, runs_as: 'usr_a' }),
+      data: null,
+      dataModifiedMs: null,
+    });
+    expect(manifest.at).toEqual(friday3pm);
+    expect(manifest.everyMs).toBe(7 * DAY);
+  });
+});
+
 describe('viewMetasWrittenBy', () => {
   const whole = JSON.stringify({ title: 'Drafts', every: '1h', runs_as: 'usr_a', refresh: 'Draft.' });
   it('names the view.json a file tool wrote, with the schedule when the diff holds the whole file', () => {
@@ -258,7 +349,7 @@ describe('viewMetasWrittenBy', () => {
       viewMetasWrittenBy({
         content: [{ type: 'diff', path: '/spaces/one/views/drafts/view.json', newText: whole }],
       })
-    ).toEqual([{ view: 'drafts', schedule: { everyMs: 3_600_000, runsAs: 'usr_a', refresh: 'Draft.' } }]);
+    ).toEqual([{ view: 'drafts', schedule: { everyMs: 3_600_000, at: null, runsAs: 'usr_a', refresh: 'Draft.' } }]);
   });
   it('gives no schedule when the diff holds only the changed part', () => {
     expect(

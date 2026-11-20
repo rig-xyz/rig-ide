@@ -128,7 +128,7 @@ export function standingUnits(input: {
       !endedBadly(work) &&
       manifest.updatedMs !== null;
     if (atRest) {
-      const every = everyInWords(manifest.everyMs ?? 0);
+      const every = everyInWords(manifest.everyMs ?? 0, manifest.at, now);
       // "Every day · in 13 h, at 00:20": how often, then how far off the next run is.
       const Every = every.charAt(0).toUpperCase() + every.slice(1);
       unit.line =

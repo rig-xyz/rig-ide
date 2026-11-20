@@ -108,13 +108,159 @@ export function viewMetaPath(name: string): string {
 export const VIEW_REFRESH_MIN_MS = 5 * 60_000;
 
 /**
+ * A set time for a schedule, as `view.json` writes it in `"at"` (with `"tz"` and `"from"`):
+ * "every Friday at 15:00, New York time, from the 27th".
+ */
+export type ViewAt = {
+  /** The days of the week it runs, 0 for Sunday, in order; null for every day. */
+  days: number[] | null;
+  /** Minutes after midnight, in `tz`. */
+  minute: number;
+  /** An IANA zone ("America/New_York"); null for the zone of the Mac that runs it. */
+  tz: string | null;
+  /** No pass before this day starts, in `tz`; null when it starts at once. */
+  fromMs: number | null;
+};
+
+/**
  * When a view's data is refreshed without anyone asking, as the agent that made the view wrote it
  * in `view.json`. Nobody configures this by hand.
  *   "every":   "30m" | "2h" | "1d"  — how old the data may get
+ *   "at":      "fri 15:00" | "09:00" | "mon,wed,fri 09:00" | "weekdays 09:00" — a set time instead
+ *              of an interval, with "tz" (an IANA zone) and "from" ("2026-11-27": not before that day)
  *   "runs_as": "usr_…"              — whose session does the refresh (the member the view was made with)
  *   "refresh": free text            — what a refresh should do, passed to the session as is
+ * With `at`, `everyMs` is the longest gap between two of its passes (a week, for one day a week).
  */
-export type ViewSchedule = { everyMs: number; runsAs: string; refresh: string | null };
+export type ViewSchedule = {
+  everyMs: number;
+  at: ViewAt | null;
+  runsAs: string;
+  refresh: string | null;
+};
+
+const DAY_MS = 86_400_000;
+const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+function isZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The calendar day a moment falls on, in a zone (null: this computer's own). */
+function wallDay(ms: number, tz: string | null): { y: number; m: number; d: number } {
+  if (tz === null) {
+    const date = new Date(ms);
+    return { y: date.getFullYear(), m: date.getMonth() + 1, d: date.getDate() };
+  }
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  }).formatToParts(ms);
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return { y: part('year'), m: part('month'), d: part('day') };
+}
+
+/** How far a zone's clock is ahead of UTC at a moment, in ms. */
+function zoneOffsetMs(ms: number, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  }).formatToParts(ms);
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  const wall = Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second'));
+  return wall - Math.floor(ms / 1000) * 1000;
+}
+
+/** The moment a zone's clock reads this day and time (null: this computer's own zone). */
+function wallToMs(y: number, m: number, d: number, minute: number, tz: string | null): number {
+  if (tz === null) return new Date(y, m - 1, d, Math.floor(minute / 60), minute % 60).getTime();
+  const asUtc = Date.UTC(y, m - 1, d, Math.floor(minute / 60), minute % 60);
+  // The offset at the guess, then at the answer: they differ only across a clock change.
+  const first = asUtc - zoneOffsetMs(asUtc, tz);
+  return asUtc - zoneOffsetMs(first, tz);
+}
+
+/** `"at"`, `"tz"` and `"from"` of a `view.json`; null when `"at"` does not say a time, or the zone is not one. */
+export function parseViewAt(at: unknown, tz: unknown, from: unknown): ViewAt | null {
+  if (typeof at !== 'string') return null;
+  const match = /^(?:(.*?)\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i.exec(at.trim());
+  if (!match) return null;
+  let hour = Number(match[2]);
+  const minutes = Number(match[3] ?? '0');
+  const half = match[4]?.toLowerCase();
+  if (half) {
+    if (hour < 1 || hour > 12) return null;
+    hour = (hour % 12) + (half === 'pm' ? 12 : 0);
+  }
+  if (hour > 23 || minutes > 59) return null;
+
+  const words = (match[1] ?? '').toLowerCase().replace(/\b(every|on|and|at)\b/g, ' ');
+  const days = new Set<number>();
+  for (const word of words.split(/[\s,]+/).filter(Boolean)) {
+    if (word === 'day' || word === 'daily') continue;
+    if (word === 'weekdays' || word === 'weekday') [1, 2, 3, 4, 5].forEach((d) => days.add(d));
+    else if (word === 'weekends' || word === 'weekend') [0, 6].forEach((d) => days.add(d));
+    else {
+      const day = DAY_NAMES.indexOf(word.slice(0, 3));
+      // "fri", "friday", "fridays": a day's name, whole or cut to three letters.
+      if (day < 0 || !/^[a-z]{3,9}$/.test(word)) return null;
+      days.add(day);
+    }
+  }
+
+  const zone = typeof tz === 'string' && tz.trim() ? tz.trim() : null;
+  if (zone !== null && !isZone(zone)) return null;
+  let fromMs: number | null = null;
+  if (typeof from === 'string' && from.trim()) {
+    const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(from.trim());
+    if (!date) return null;
+    fromMs = wallToMs(Number(date[1]), Number(date[2]), Number(date[3]), 0, zone);
+  }
+  return {
+    days: days.size === 0 || days.size === 7 ? null : [...days].sort((a, b) => a - b),
+    minute: hour * 60 + minutes,
+    tz: zone,
+    fromMs,
+  };
+}
+
+/** The first time a set-time schedule comes up after a moment. */
+export function viewAtNextMs(at: ViewAt, afterMs: number): number {
+  const after = at.fromMs !== null ? Math.max(afterMs, at.fromMs - 1) : afterMs;
+  const start = wallDay(after, at.tz);
+  for (let ahead = 0; ahead <= 7; ahead++) {
+    // The calendar day `ahead` days on (a month's end rolls over), read back as plain numbers.
+    const day = new Date(Date.UTC(start.y, start.m - 1, start.d + ahead));
+    if (at.days && !at.days.includes(day.getUTCDay())) continue;
+    const ms = wallToMs(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate(), at.minute, at.tz);
+    if (ms > after) return ms;
+  }
+  return after + 7 * DAY_MS;
+}
+
+/** The longest gap between two passes of a set-time schedule: a day, or up to a week. */
+function viewAtPeriodMs(at: ViewAt): number {
+  if (!at.days) return DAY_MS;
+  let longest = 0;
+  at.days.forEach((day, i) => {
+    const next = at.days![(i + 1) % at.days!.length]!;
+    longest = Math.max(longest, ((next - day + 7) % 7 || 7) * DAY_MS);
+  });
+  return longest;
+}
 
 export function parseViewSchedule(text: string): ViewSchedule | null {
   let raw: unknown;
@@ -124,29 +270,38 @@ export function parseViewSchedule(text: string): ViewSchedule | null {
     return null;
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const { every, runs_as: runsAs, refresh } = raw as Record<string, unknown>;
-  if (typeof every !== 'string' || typeof runsAs !== 'string' || !/^usr_[a-z0-9]+$/i.test(runsAs))
-    return null;
+  const { every, at: atText, tz, from, runs_as: runsAs, refresh } = raw as Record<string, unknown>;
+  if (typeof runsAs !== 'string' || !/^usr_[a-z0-9]+$/i.test(runsAs)) return null;
+  const words = typeof refresh === 'string' && refresh.trim() ? refresh.trim().slice(0, 2000) : null;
+  // A set time, when one is written, is the schedule; a time that cannot be read is no schedule
+  // at all, never a fallback to an interval nobody asked for.
+  if (atText !== undefined && atText !== null) {
+    const at = parseViewAt(atText, tz, from);
+    return at ? { everyMs: viewAtPeriodMs(at), at, runsAs, refresh: words } : null;
+  }
+  if (typeof every !== 'string') return null;
   const match = /^(\d{1,4})\s*(m|h|d)$/i.exec(every.trim());
   if (!match) return null;
   const unit = { m: 60_000, h: 3_600_000, d: 86_400_000 }[
     match[2].toLowerCase() as 'm' | 'h' | 'd'
   ];
   const everyMs = Math.max(Number(match[1]) * unit, VIEW_REFRESH_MIN_MS);
-  return {
-    everyMs,
-    runsAs,
-    refresh: typeof refresh === 'string' && refresh.trim() ? refresh.trim().slice(0, 2000) : null,
-  };
+  return { everyMs, at: null, runsAs, refresh: words };
 }
 
 /**
- * What a member agrees to when a schedule runs in their session: how often, and the words their
- * session is given. Two schedules with the same signature are the same agreement, so a rename or a
- * new icon in `view.json` changes nothing; a new interval or new refresh words do.
+ * What a member agrees to when a schedule runs in their session: how often or at what time, and
+ * the words their session is given. Two schedules with the same signature are the same agreement,
+ * so a rename or a new icon in `view.json` changes nothing; a new interval, a new time or new
+ * refresh words do.
  */
-export function viewScheduleSignature(schedule: Pick<ViewSchedule, 'everyMs' | 'refresh'>): string {
-  return `${schedule.everyMs}\n${schedule.refresh ?? ''}`;
+export function viewScheduleSignature(
+  schedule: Pick<ViewSchedule, 'everyMs' | 'refresh'> & { at?: ViewAt | null }
+): string {
+  const base = `${schedule.everyMs}\n${schedule.refresh ?? ''}`;
+  const at = schedule.at;
+  if (!at) return base;
+  return `${base}\n${at.days?.join(',') ?? '*'} ${at.minute} ${at.tz ?? ''} ${at.fromMs ?? ''}`;
 }
 
 const VIEW_META_PATH = /(?:^|[\\/])views[\\/]([a-z0-9][a-z0-9_-]{0,63})[\\/]view\.json$/i;
@@ -187,6 +342,7 @@ export function viewMetasWrittenBy(
  */
 export function isViewRefreshDue(spec: {
   everyMs: number;
+  at?: ViewAt | null;
   dataModifiedMs: number | null;
   lastStartedMs: number | null;
   now: number;
@@ -194,17 +350,29 @@ export function isViewRefreshDue(spec: {
   return spec.now >= viewNextDueMs(spec);
 }
 
-/** When a scheduled view is next due; 0 when it is due now and has never been tried. */
+/**
+ * When a scheduled view is next due; 0 when it is due now and has never been tried. A set time
+ * comes up the first time after the last pass (or, with none on record, after the data was last
+ * written): a time missed while the app was closed is due as soon as it opens.
+ */
 export function viewNextDueMs(spec: {
   everyMs: number;
+  at?: ViewAt | null;
   dataModifiedMs: number | null;
   lastStartedMs: number | null;
 }): number {
-  if (spec.lastStartedMs !== null) return spec.lastStartedMs + spec.everyMs;
-  return spec.dataModifiedMs === null ? 0 : spec.dataModifiedMs + spec.everyMs;
+  const since = spec.lastStartedMs ?? spec.dataModifiedMs;
+  if (spec.at) {
+    if (since !== null) return viewAtNextMs(spec.at, since);
+    return spec.at.fromMs !== null ? viewAtNextMs(spec.at, spec.at.fromMs - 1) : 0;
+  }
+  return since === null ? 0 : since + spec.everyMs;
 }
 
-export function viewRefreshPrompt(view: string, schedule: ViewSchedule): string {
+export function viewRefreshPrompt(
+  view: string,
+  schedule: Pick<ViewSchedule, 'refresh'> & Partial<ViewSchedule>
+): string {
   const what = schedule.refresh ? ` ${schedule.refresh}` : '';
   return `Scheduled refresh of the "${view}" view.${what}`;
 }
@@ -237,7 +405,7 @@ export function viewLinkToOpen(value: unknown): string | null {
  * later the dock and notifications) without running the page. Only the page body is code.
  *
  * It is read from two files, because the two halves change at different speeds:
- *   `view.json`, written once   — `kind`, `icon`, `order`, `title`, `made_for`, `sources`, and the schedule (`every`, `runs_as`, `refresh`)
+ *   `view.json`, written once   — `kind`, `icon`, `order`, `title`, `made_for`, `sources`, and the schedule (`every` or `at`, `runs_as`, `refresh`)
  *   `data.json`'s `tab`, written on every refresh — `sub`, `count`, `status`, `note`
  * and Rig fills in the rest itself: when the data last changed, and who is looking.
  */
@@ -266,6 +434,8 @@ export type ViewManifest = {
   /** How old its data may get, as written (`"30m"`) and in ms; null when it only refreshes on request. */
   every: string | null;
   everyMs: number | null;
+  /** The set time it refreshes at, when its schedule is one; absent or null for an interval or no schedule. */
+  at?: ViewAt | null;
 };
 
 /** A Lucide icon name as written in `view.json`: "pen-line", "PenLine" and "pen_line" all read as "pen-line". */
@@ -343,6 +513,7 @@ export function readViewManifest(spec: {
     updatedMs: spec.dataModifiedMs,
     every: schedule ? shortText(meta?.every, 12) : null,
     everyMs: schedule?.everyMs ?? null,
+    at: schedule?.at ?? null,
   };
 }
 

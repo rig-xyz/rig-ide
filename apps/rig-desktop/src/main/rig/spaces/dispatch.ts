@@ -638,6 +638,7 @@ export function spaceRules(spec: {
       `Your owner's relay id is ${spec.views.ownerUserId}.`,
       "This space can show pages you write, called views: a folder `views/<name>/` holding `index.html` and `data.json` appears as a tab for everyone here, stays live as the data changes, and sends a person's choices back to their own agent. Before you make or change one, read the rig-views skill at `~/.claude/skills/rig-views/SKILL.md` (Codex: `~/.agents/skills/rig-views/SKILL.md`): the page runs in a sealed frame with rules of its own.",
       'When someone wants standing work set up here ("a factory", "run this every day", "keep doing this for me"), read the rig-factory skill at `~/.claude/skills/rig-factory/SKILL.md` first.',
+      'Anything that should run again later here ("every hour", "every Friday at 3pm") is a schedule on a view, written in its `view.json` (the rig-views skill, "Keeping it fresh on a schedule"): an interval or a set day and time. Rig runs it and shows it on the tab, where everyone here can see and stop it. Never set it up outside Rig (launchd, cron, a calendar or a reminder): nobody would see it in the space.',
       'When someone posts or points at a Claude artifact (or another single page they run their work from) and wants this space to look and work like it, read the rig-artifact-import skill at `~/.claude/skills/rig-artifact-import/SKILL.md` first.'
     );
   }

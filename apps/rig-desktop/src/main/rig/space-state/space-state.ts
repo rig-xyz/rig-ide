@@ -7,7 +7,7 @@ import type {
   ViewRefreshSkip,
   ViewWork,
 } from '@shared/rig/space-state';
-import { viewNextDueMs } from '@shared/rig/views';
+import { viewNextDueMs, type ViewAt } from '@shared/rig/views';
 
 /**
  * What this Mac knows about a space's standing work and turns (spike, Rig Alpha): per view, its
@@ -30,6 +30,8 @@ import { viewNextDueMs } from '@shared/rig/views';
 export type SeenView = {
   name: string;
   everyMs: number | null;
+  /** The set time of its schedule, when it has one. Absent or null: an interval, or no schedule. */
+  at?: ViewAt | null;
   runsAs: string | null;
   dataModifiedMs: number | null;
   lastStartedMs: number | null;
@@ -240,10 +242,11 @@ export function createSpaceStateStore(deps: { now: () => number; onChange?: (bin
           const nextDueAt =
             seen.everyMs === null
               ? null
-              : viewNextDueMs({ everyMs: seen.everyMs, dataModifiedMs: seen.dataModifiedMs, lastStartedMs: seen.lastStartedMs });
+              : viewNextDueMs({ everyMs: seen.everyMs, at: seen.at, dataModifiedMs: seen.dataModifiedMs, lastStartedMs: seen.lastStartedMs });
           next.set(seen.name, {
             view: seen.name,
             everyMs: seen.everyMs,
+            at: seen.at ?? null,
             runsAs: seen.runsAs,
             runsHere: me !== null && seen.runsAs !== null ? seen.runsAs === me : null,
             needsAccept: seen.needsAccept === true,

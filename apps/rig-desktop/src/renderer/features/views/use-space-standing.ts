@@ -25,7 +25,9 @@ export function useSpaceStanding(
 } {
   const working = useViewTurnsRunning(bindingId);
   // A view or schedule that just appeared is looked at by main at once, not at the next minute.
-  const refreshKey = views.map((v) => `${v.name}:${v.everyMs}:${v.updatedMs}`).join('|');
+  const refreshKey = views
+    .map((v) => `${v.name}:${v.everyMs}:${v.at ? `${v.at.days ?? ''}@${v.at.minute}${v.at.tz ?? ''}` : ''}:${v.updatedMs}`)
+    .join('|');
   const spaceState = useSpaceState(bindingId, refreshKey);
   // Schedules that appeared while the space was open say so for a minute.
   const seenSchedules = useRef<{ bindingId: string; every: Map<string, number | null> } | null>(

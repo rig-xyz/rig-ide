@@ -1,4 +1,5 @@
 import { defineEvent } from '../lib/ipc/events';
+import type { ViewAt } from './views';
 
 /**
  * What this Mac's Rig knows about a space's standing work and turns (spike, Rig Alpha). Plain JSON
@@ -34,6 +35,8 @@ export type ViewRefreshSkip = 'busy' | 'queued';
 export type ViewWork = {
   view: string;
   everyMs: number | null; // null: refreshes only when asked
+  /** The set time it runs at ("every Friday at 15:00"), when its schedule is one. Absent or null: an interval. */
+  at?: ViewAt | null;
   runsAs: string | null; // usr_… from view.json
   runsHere: boolean | null; // null: who is signed in is not known yet
   /** It would run here, but this Mac's person has not agreed to this schedule (someone else set or changed it). */

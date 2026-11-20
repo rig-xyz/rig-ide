@@ -6,7 +6,13 @@ import {
   type SpaceState,
   type ViewWork,
 } from '@shared/rig/space-state';
-import { viewOfRefreshPrompt, viewStatusFor, type ViewManifest } from '@shared/rig/views';
+import {
+  viewAtNextMs,
+  viewOfRefreshPrompt,
+  viewStatusFor,
+  type ViewAt,
+  type ViewManifest,
+} from '@shared/rig/views';
 
 /**
  * Every line of copy and every state decision the tabs rail shows about standing work and turns
@@ -38,7 +44,32 @@ export function agoShort(ms: number, now: number): string {
   return hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`;
 }
 
-export function everyInWords(everyMs: number): string {
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/**
+ * A set time in words, on this computer's clock whatever zone it was written in: "every Friday at
+ * 15:00", "every weekday at 09:00", "every Mon, Wed and Fri at 09:00", "every day at 09:00".
+ */
+function atInWords(at: ViewAt, now: number): string {
+  // The times it comes up over the next week say which days and what hour those are here.
+  const anytime = { ...at, fromMs: null };
+  const times: number[] = [];
+  for (let t = now, i = 0; i < (at.days?.length ?? 1); i++) times.push((t = viewAtNextMs(anytime, t)));
+  const time = clock(times[0]!);
+  if (!at.days) return `every day at ${time}`;
+  // Monday first, as a week is read.
+  const days = [...new Set(times.map((t) => new Date(t).getDay()))].sort(
+    (a, b) => ((a + 6) % 7) - ((b + 6) % 7)
+  );
+  if (days.length === 1) return `every ${WEEKDAYS[days[0]!]} at ${time}`;
+  if (days.join() === '1,2,3,4,5') return `every weekday at ${time}`;
+  const short = days.map((day) => WEEKDAYS[day]!.slice(0, 3));
+  return `every ${short.slice(0, -1).join(', ')} and ${short.at(-1)} at ${time}`;
+}
+
+/** How often a schedule runs, in words: its interval, or its set time when it has one. */
+export function everyInWords(everyMs: number, at?: ViewAt | null, now = Date.now()): string {
+  if (at) return atInWords(at, now);
   const minutes = Math.max(1, Math.round(everyMs / MINUTE));
   if (minutes % 1440 === 0) {
     const days = minutes / 1440;
@@ -254,8 +285,13 @@ const viewRunLine = (run: SpaceRun): string =>
 const titleOf = (view: ViewManifest): string => view.title ?? view.name;
 
 /** "every hour, next at 15:00"; without the runtime's clock, just "every hour". */
-function schedule(everyMs: number, work: ViewWork | undefined, now: number): string {
-  const every = everyInWords(everyMs);
+function schedule(
+  everyMs: number,
+  at: ViewAt | null | undefined,
+  work: ViewWork | undefined,
+  now: number
+): string {
+  const every = everyInWords(everyMs, at, now);
   return work && work.nextDueAt !== null ? `${every}, ${nextInWords(work.nextDueAt, now)}` : every;
 }
 
@@ -298,7 +334,7 @@ export function viewRowStatus(input: {
   const { manifest, work, runs, turnRunning, unseen, justScheduled, viewerId, now } = input;
   const every = manifest.everyMs;
   const updated = manifest.updatedMs !== null ? ago(manifest.updatedMs, now) : null;
-  const tail = every !== null ? `Refreshes ${schedule(every, work, now)}.` : 'No schedule yet.';
+  const tail = every !== null ? `Refreshes ${schedule(every, manifest.at, work, now)}.` : 'No schedule yet.';
   const tooltip = updated ? `Updated ${updated}. ${tail}` : tail;
   const row = (text: string, extra: Partial<RowStatus> = {}): RowStatus => ({
     text,
@@ -313,17 +349,17 @@ export function viewRowStatus(input: {
   if (turnRunning) return row('Starting', { matrix: { state: 'starting' } });
   // Someone else set or changed its schedule: nothing runs in this person's Claude until they agree.
   if (work?.needsAccept && every !== null)
-    return row(`Refreshes ${everyInWords(every)} once you accept`, {
+    return row(`Refreshes ${everyInWords(every, manifest.at, now)} once you accept`, {
       tone: 'warn',
       tooltip: NEEDS_ACCEPT_WHY,
     });
   if (unseen) {
     return row(
-      every !== null ? `Refreshes ${schedule(every, work, now)}` : (manifest.sub ?? 'Just added'),
+      every !== null ? `Refreshes ${schedule(every, manifest.at, work, now)}` : (manifest.sub ?? 'Just added'),
       { arrived: true }
     );
   }
-  if (justScheduled && every !== null) return row(`Now refreshes ${schedule(every, work, now)}`);
+  if (justScheduled && every !== null) return row(`Now refreshes ${schedule(every, manifest.at, work, now)}`);
   // Another member's app keeps it fresh: say when that app is on it, failed, or is being waited on.
   if (work?.runsHere === false) {
     const owner = ownerLine({
@@ -386,7 +422,7 @@ export function standingLine(input: {
 }): EntryStatus {
   const { manifest, work, runs, turnRunning, justScheduled, runsAsName, now } = input;
   const everyMs = manifest.everyMs ?? 0;
-  const every = everyInWords(everyMs);
+  const every = everyInWords(everyMs, manifest.at, now);
   const Every = capital(every);
   // Scheduled and at rest: the grid idles, ready to wake.
   const queued: Matrix = { state: 'standby', tone: 'mute' };
@@ -408,7 +444,7 @@ export function standingLine(input: {
   if (work?.needsAccept) return { text: `${Every}, once you accept`, tone: 'warn', matrix: queued };
   if (justScheduled) {
     return {
-      text: `Now refreshes ${schedule(everyMs, work, now)}`,
+      text: `Now refreshes ${schedule(everyMs, manifest.at, work, now)}`,
       // The same quiet grid as any loop at rest; that it is new shows in how it arrives.
       matrix: queued,
       arrived: true,
@@ -597,7 +633,7 @@ export function runningEntries(input: {
     entries.push({
       key: `accept:${view.name}`,
       label: `${titleOf(view)}: schedule changed`,
-      sub: capital(everyInWords(work.everyMs)),
+      sub: capital(everyInWords(work.everyMs, work.at, now)),
       subTone: 'warn',
       matrix: 'standby',
       matrixTone: 'mute',
@@ -623,7 +659,7 @@ export function runningEntries(input: {
       matrix: 'standby',
       matrixTone: 'mute',
       runNow: next.view.name,
-      tooltip: `Runs ${everyInWords(next.view.everyMs ?? 0)}, in your Rig app while it is open.`,
+      tooltip: `Runs ${everyInWords(next.view.everyMs ?? 0, next.view.at, now)}, in your Rig app while it is open.`,
     },
   ];
 }

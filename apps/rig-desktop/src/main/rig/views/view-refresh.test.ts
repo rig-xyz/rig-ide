@@ -37,6 +37,30 @@ describe('createViewRefresher', () => {
     );
     expect(runs[0].context).toContain('views/drafts/data.json');
   });
+  it('runs a view on a set time once that time has come, and not again until the next', async () => {
+    // Every Friday at 15:00 in New York (UTC-5), set on Friday 2026-11-20 at 18:25 there.
+    const set = Date.UTC(2026, 10, 20, 23, 25);
+    const first = Date.UTC(2026, 10, 27, 20, 0);
+    const list = [
+      {
+        name: 'drafts',
+        meta: JSON.stringify({ at: 'fri 15:00', tz: 'America/New_York', runs_as: 'usr_me', refresh: 'Check.' }),
+        dataModifiedMs: set,
+      },
+    ];
+    const seen: unknown[] = [];
+    const { refresher, runs, clock } = setup({ list, seen: (_b, _u, views) => seen.push(views[0]) });
+    clock.now = first - 60_000;
+    expect(await refresher.tick()).toEqual([]);
+    expect(seen.at(-1)).toMatchObject({ everyMs: 7 * 24 * HOUR, at: { days: [5], minute: 900 } });
+    clock.now = first;
+    expect(await refresher.tick()).toEqual(['bnd_1/drafts']);
+    expect(runs[0].prompt).toBe('Scheduled refresh of the "drafts" view. Check.');
+    clock.now = first + 6 * 24 * HOUR;
+    expect(await refresher.tick()).toEqual([]);
+    clock.now = first + 7 * 24 * HOUR;
+    expect(await refresher.tick()).toEqual(['bnd_1/drafts']);
+  });
   it('leaves fresh data alone', async () => {
     const { refresher, runs } = setup({
       list: [{ name: 'drafts', meta: meta('1h'), dataModifiedMs: 10 * HOUR - 60_000 }],
@@ -122,7 +146,7 @@ describe('createViewRefresher: what the timer reports', () => {
     expect(await refresher.tick()).toEqual([]);
     expect(runs).toEqual([]);
     expect(seen).toEqual([
-      [{ name: 'drafts', everyMs: HOUR, runsAs: 'usr_me', dataModifiedMs: 8 * HOUR, lastStartedMs: null, needsAccept: false }],
+      [{ name: 'drafts', everyMs: HOUR, at: null, runsAs: 'usr_me', dataModifiedMs: 8 * HOUR, lastStartedMs: null, needsAccept: false }],
     ]);
     expect(skipped).toEqual([['bnd_1', 'drafts', 'busy']]);
   });
