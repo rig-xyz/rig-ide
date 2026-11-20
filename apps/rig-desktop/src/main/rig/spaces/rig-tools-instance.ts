@@ -3,6 +3,7 @@ import { err, ok, type Result } from '@emdash/shared';
 import { rigAccountController } from '../account';
 import { VIEW_LOOK_TOOL, viewLookTool } from '../views/view-look';
 import { homeLayoutSync } from '../home-layout';
+import { rigHomeLayoutChangedChannel } from '@shared/rig/home-layout';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { events } from '@main/lib/events';
 import type { RigFileNode } from '@shared/rig/files';
@@ -171,7 +172,12 @@ const backend: RigToolsBackend = {
   // The control plane; imported lazily, since it reaches the dispatcher, which imports this module.
   homeNav: {
     layout: () => homeLayoutSync.get(),
-    apply: (action) => homeLayoutSync.apply(action),
+    // The window made no such edit itself, so it is told: the list changes while the chat answers.
+    apply: async (action) => {
+      const layout = await homeLayoutSync.apply(action);
+      events.emit(rigHomeLayoutChangedChannel, { layout });
+      return layout;
+    },
     spaces: async () => {
       const ws = await rigAccountController.workspaces();
       if (!ws.success) return ws;
