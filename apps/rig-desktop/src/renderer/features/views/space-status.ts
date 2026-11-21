@@ -349,9 +349,11 @@ export function viewRowStatus(input: {
   if (turnRunning) return row('Starting', { matrix: { state: 'starting' } });
   // Someone else set or changed its schedule: nothing runs in this person's Claude until they agree.
   if (work?.needsAccept && every !== null)
-    return row(`Refreshes ${everyInWords(every, manifest.at, now)} once you accept`, {
+    // Short enough for the tab list, where a line with the cadence in it was cut mid-word
+    // ("Refreshes every Friday at 12:0…"): the cadence is in the tooltip, and beside Accept below.
+    return row('Schedule not accepted yet', {
       tone: 'warn',
-      tooltip: NEEDS_ACCEPT_WHY,
+      tooltip: `Refreshes ${everyInWords(every, manifest.at, now)} once you accept. ${NEEDS_ACCEPT_WHY}`,
     });
   if (unseen) {
     return row(

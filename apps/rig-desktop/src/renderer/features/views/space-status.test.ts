@@ -503,10 +503,13 @@ describe('copy', () => {
 
 describe('a schedule that waits for the person to accept it', () => {
   it('says so on the tab, in place of when it next runs', () => {
-    expect(row({ work: work({ needsAccept: true }) })).toMatchObject({
-      text: 'Refreshes every hour once you accept',
-      tone: 'warn',
-    });
+    const waiting = row({ work: work({ needsAccept: true }) });
+    // Short, so the tab list never cuts it; how often it would run is in the tooltip.
+    expect(waiting).toMatchObject({ text: 'Schedule not accepted yet', tone: 'warn' });
+    expect(waiting.text.length).toBeLessThanOrEqual(28);
+    expect(waiting.tooltip).toBe(
+      'Refreshes every hour once you accept. Another member set or changed this schedule. It runs in your Claude only once you accept it.'
+    );
   });
   it('says so on the standing line', () => {
     expect(
