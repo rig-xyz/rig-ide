@@ -206,6 +206,7 @@ export function Composer({
   waitingNote = WILL_SEND_WHEN_ONLINE,
   listFiles,
   placeholder,
+  matchCommands,
   footer,
   autoFocus = false,
   people = [],
@@ -250,6 +251,11 @@ export function Composer({
   waitingNote?: string;
   /** The empty box's words when not replying to anyone (the thread panel's "Reply in thread"); "Message #space" without it. */
   placeholder?: string;
+  /**
+   * The commands "/" offers here in place of the Room's own (Home's chat has its own short list):
+   * those matching what is typed after the slash. Picking one sends its `cmd`, as for the Room's.
+   */
+  matchCommands?: (query: string) => readonly { id: string; cmd: string; desc: string }[];
   /** Under the box (the thread panel's "Also send to #space"). */
   footer?: ReactNode;
   /** Focus the box when it appears (a thread just opened). */
@@ -474,7 +480,8 @@ export function Composer({
     if (skillQuery !== null) {
       const q = skillQuery.toLowerCase();
       // Rig's own commands first: picking one runs it, nothing is posted to the Room.
-      const commands: MenuItem[] = matchRoomCommands(skillQuery, alpha).map((command) => ({
+      const listed = matchCommands ? matchCommands(skillQuery) : matchRoomCommands(skillQuery, alpha);
+      const commands: MenuItem[] = listed.map((command) => ({
         key: `command-${command.id}`,
         section: 'Rig',
         icon: <Terminal className="size-3.5 text-text-muted" strokeWidth={1.5} />,
@@ -571,7 +578,7 @@ export function Composer({
     }
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skillQuery, mentionQuery, fileQuery, emojiQuery, emojiIndex, spaceFiles, skills, members, offered, runnable, busyAgents, people, alpha]);
+  }, [skillQuery, mentionQuery, fileQuery, emojiQuery, emojiIndex, spaceFiles, skills, members, offered, runnable, busyAgents, people, alpha, matchCommands]);
 
   const menuOpen = items.length > 0 && dismissedFor !== value;
   // Skills, files and emoji open the list above the input; people and agents the pill row.

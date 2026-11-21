@@ -7,6 +7,7 @@ import type { RoomAgent, RoomMember, RoomMessage, RoomSnapshot } from '@renderer
 import { events, rpc } from '@renderer/lib/ipc';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { homeChatRunChannel, type HomeChatRun } from '@shared/rig/home-chat';
+import { matchHomeCommands, type HomeCommand } from './home-commands';
 import { noteWords, type HomeNote } from './home-notes';
 
 /**
@@ -38,9 +39,12 @@ export function useHomeRuns(enabled: boolean): HomeChatRun[] | null {
         const now = await rpc.rig.homeChat.runs();
         if (!gone) setRuns((was) => (was?.length ? was : now));
       });
+    const forget = () => setRuns([]);
+    forgotten.add(forget);
     return () => {
       gone = true;
       off();
+      forgotten.delete(forget);
       setRuns(null);
     };
   }, [enabled]);
@@ -49,6 +53,36 @@ export function useHomeRuns(enabled: boolean): HomeChatRun[] | null {
 
 export function sendToHomeClaude(text: string): void {
   void rpc.rig.homeChat.ask({ text });
+}
+
+/** Asked to forget the conversation: every mounted chat empties (`useHomeRuns`). */
+const forgotten = new Set<() => void>();
+
+/**
+ * A command for Rig typed in Home's chat (`home-commands.ts`): nothing is sent to Claude as
+ * words. Resolves to what to tell the person when it could not be done, or null.
+ */
+export async function runHomeCommand(command: HomeCommand, busy: boolean): Promise<string | null> {
+  try {
+    if (command === 'stop') {
+      if (!busy) return 'Rig is not doing anything right now.';
+      await rpc.rig.homeChat.stop();
+      return null;
+    }
+    if (command === 'compact') {
+      if (busy) return 'Rig is still answering. Shorten the conversation once it is done.';
+      // Claude's own command, sent alone: it shows as a step ("Compacted") like any other run.
+      const sent = await rpc.rig.homeChat.ask({ text: '/compact' });
+      return sent.success ? null : sent.error;
+    }
+    // A new conversation: the old one is forgotten here and in main, and the next one opens at once.
+    await rpc.rig.homeChat.reset();
+    for (const forget of forgotten) forget();
+    const opened = await rpc.rig.homeChat.open();
+    return opened.success ? null : opened.error;
+  } catch {
+    return 'Rig could not do that. Try again in a moment.';
+  }
 }
 
 const ME = 'me';
@@ -192,6 +226,7 @@ export function HomeComposer({ name, busy, onSend }: { name: string; busy: boole
       skills={[]}
       busyAgents={busy ? ['claude'] : []}
       placeholder="Ask Rig, or tell it what to start"
+      matchCommands={matchHomeCommands}
       onSend={(text) => onSend(text)}
     />
   );

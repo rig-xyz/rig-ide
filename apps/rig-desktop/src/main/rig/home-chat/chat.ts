@@ -97,6 +97,28 @@ export function homeChatPermission(request: AcpPermissionRequest): string | null
 
 const TURN_TIMEOUT_MS = 3 * 60_000;
 
+/**
+ * Claude's own commands that Home passes straight to it. `/compact` only: starting over and
+ * stopping are Rig's to do (`reset`, `stop`), and a skill is asked for in words like any work.
+ */
+const OWN_COMMANDS: ReadonlySet<string> = new Set(['/compact']);
+
+/** The whole message is one of Claude's own commands (words after it are its instructions). */
+export function isOwnCommand(text: string): boolean {
+  const word = /^\/[a-z-]+/i.exec(text.trim())?.[0]?.toLowerCase();
+  return word !== undefined && OWN_COMMANDS.has(word);
+}
+
+/** What a finished "/compact" step says it did ("…: 41k tokens are now 12k."), or null for any other update. */
+export function compactedLine(update: Record<string, unknown>): string | null {
+  if (update.sessionUpdate !== 'tool_call_update') return null;
+  const tool = (update._meta as { claudeCode?: { toolName?: unknown } } | undefined)?.claudeCode?.toolName;
+  const out = update.rawOutput as { preTokens?: unknown; postTokens?: unknown } | undefined;
+  if (tool !== 'compact' || typeof out?.preTokens !== 'number' || typeof out.postTokens !== 'number') return null;
+  const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+  return `The conversation so far is now a summary: ${k(out.preTokens)} tokens are now ${k(out.postTokens)}.`;
+}
+
 export function createHomeChat(deps: HomeChatDeps): HomeChat {
   let live: { conversationId: string; ownerUserId: string; cwd: string; off: () => void } | null = null;
   let queue: Promise<unknown> = Promise.resolve();
@@ -209,6 +231,15 @@ export function createHomeChat(deps: HomeChatDeps): HomeChat {
     if (raw.kind === 'acp_update') {
       if (raw.update.sessionUpdate === 'available_commands_update' || raw.update.sessionUpdate === 'user_message_chunk') return;
       run.events.push({ seq: ++seq, kind: raw.update.sessionUpdate, payload: raw.update as Record<string, unknown> });
+      // "/compact" ends with no words of Claude's: the card says what it did, from what the step reports.
+      const compacted = compactedLine(raw.update as Record<string, unknown>);
+      if (compacted) {
+        run.events.push({
+          seq: ++seq,
+          kind: 'agent_message_chunk',
+          payload: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: compacted } },
+        });
+      }
       changed(run);
     } else if (raw.kind === 'turn_end') {
       const status = raw.stopReason === 'cancelled' ? 'stopped' : raw.stopReason === 'refusal' ? 'failed' : 'done';
@@ -235,7 +266,9 @@ export function createHomeChat(deps: HomeChatDeps): HomeChat {
       run.endedAt = new Date(now()).toISOString();
       changed(run, true);
     };
-    const queued = await deps.acp.queuePrompt(session.data.conversationId, text, turnContext(), fail);
+    // One of Claude's own commands goes alone: with the hidden line after it, Claude reads it as words.
+    const hidden = isOwnCommand(text) ? undefined : turnContext();
+    const queued = await deps.acp.queuePrompt(session.data.conversationId, text, hidden, fail);
     if (!queued.success) {
       fail(queued.error);
       return err(queued.error);

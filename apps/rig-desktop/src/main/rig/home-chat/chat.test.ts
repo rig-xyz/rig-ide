@@ -3,7 +3,15 @@ import { err, ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { RawSessionEvent } from '../spaces/dispatch';
 import type { HomeChatRun } from '@shared/rig/home-chat';
-import { createHomeChat, HOME_CHAT_RULES, homeChatPermission, homeChatSelf, type HomeChatDeps } from './chat';
+import {
+  compactedLine,
+  createHomeChat,
+  HOME_CHAT_RULES,
+  homeChatPermission,
+  homeChatSelf,
+  isOwnCommand,
+  type HomeChatDeps,
+} from './chat';
 
 const request = (title: string): AcpPermissionRequest =>
   ({
@@ -186,5 +194,38 @@ describe('Home chat', () => {
     expect(acp.stopSession).toHaveBeenCalledWith('home-1');
     await chat.send('again');
     expect(acp.startSession).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Claude's own commands in Home's chat", () => {
+  it('"/compact" is one, with or without instructions after it; other slashes and words are not', () => {
+    expect(isOwnCommand('/compact')).toBe(true);
+    expect(isOwnCommand('  /Compact keep the decisions ')).toBe(true);
+    expect(isOwnCommand('/compactly')).toBe(false);
+    expect(isOwnCommand('/new')).toBe(false);
+    expect(isOwnCommand('please /compact')).toBe(false);
+  });
+
+  it('goes to Claude alone, with no hidden line after it, while any other message carries its turn', async () => {
+    const { acp } = fakeAcp(() => '');
+    const chat = createHomeChat(deps(acp as never));
+    await chat.ask('/compact');
+    expect(acp.queuePrompt).toHaveBeenLastCalledWith('home-1', '/compact', undefined, expect.any(Function));
+    await chat.ask('what needs me?');
+    expect(acp.queuePrompt).toHaveBeenLastCalledWith('home-1', 'what needs me?', expect.stringMatching(/^<rig_turn /), expect.any(Function));
+  });
+
+  it('says what a finished compact step did, and nothing for any other update', () => {
+    const step = (toolName: string, rawOutput: unknown) => ({
+      sessionUpdate: 'tool_call_update',
+      rawOutput,
+      _meta: { claudeCode: { toolName } },
+    });
+    expect(compactedLine(step('compact', { trigger: 'manual', preTokens: 40_600, postTokens: 12_199 }))).toBe(
+      'The conversation so far is now a summary: 41k tokens are now 12k.'
+    );
+    expect(compactedLine(step('compact', {}))).toBeNull();
+    expect(compactedLine(step('Read', { preTokens: 1, postTokens: 1 }))).toBeNull();
+    expect(compactedLine({ sessionUpdate: 'agent_message_chunk' })).toBeNull();
   });
 });

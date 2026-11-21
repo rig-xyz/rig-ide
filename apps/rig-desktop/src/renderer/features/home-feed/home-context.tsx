@@ -35,7 +35,8 @@ import type { HomeChatRun } from '@shared/rig/home-chat';
 import { mergeRail } from './rail-data';
 import { type RealFeed, useRealFeed } from './use-real-feed';
 import { claudeOrchestrator } from './claude-orchestrator';
-import { sendToHomeClaude, useHomeRuns } from './home-claude';
+import { runHomeCommand, sendToHomeClaude, useHomeRuns } from './home-claude';
+import { homeCommand } from './home-commands';
 import { chosen, normalizeText, sayPlain } from './say';
 import {
   feedCounts,
@@ -648,6 +649,17 @@ export function HomeProvider({
       const text = raw.trim();
       if (!text) return;
       if (homeRuns) {
+        // A command for Rig ("/new", "/compact", "/stop"), not words for Claude.
+        const command = homeCommand(text);
+        if (command) {
+          const busy = homeRuns.some((run) => run.status === 'running');
+          void runHomeCommand(command, busy).then((problem) => {
+            if (problem) appToast({ title: problem });
+            else if (command === 'new')
+              appToast({ title: 'New conversation', description: 'Rig starts fresh from your next message.' });
+          });
+          return;
+        }
         sendToHomeClaude(text);
         return;
       }
