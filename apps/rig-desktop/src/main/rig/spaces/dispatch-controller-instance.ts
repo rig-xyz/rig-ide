@@ -12,6 +12,8 @@ import { isError, resolveContext, rigAccountController } from '../account';
 import { reportAgentRunFailure } from '../agent-run-failure-instance';
 import { clearAgentSignInNeeded, noteAgentRunFailedForSignIn } from '../agent-sign-in-needed';
 import { findBindingConfig } from '../binding';
+import { watchAcpSessions } from '../session-registry';
+import { createOwnChatWrites } from '../views/own-chat-writes';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { activeMac } from '../active-mac-instance';
 import { runRig } from '../create';
@@ -424,6 +426,16 @@ let refresher: ReturnType<typeof createViewRefresher> | null = null;
 
 /** Starts the timer that refreshes views whose `view.json` asks for it (`views/view-refresh.ts`). */
 export function wireViewRefresh(): void {
+  // The person's chat sessions in a space (one Home's chat started, a side chat) report the
+  // schedules they write too, so those are agreed to like one a Room run wrote.
+  const acpSessions = createRuntimeAcpSessions(getAcpRuntimeClient);
+  watchAcpSessions(
+    createOwnChatWrites({
+      bindingOf: (cwd) => findBindingConfig(cwd)?.config.bindingId ?? null,
+      subscribeRaw: (conversationId, on) => acpSessions.subscribeRaw(conversationId, on),
+      mark: (bindingId, view, signature) => ownViewWrites.mark(bindingId, view, signature),
+    })
+  );
   refresher = createViewRefresher({
     enabled: () => rigSettingsStore.get().alphaEnabled && spacesDispatchController.isRunning(),
     me: async () => {
