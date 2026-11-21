@@ -1,4 +1,15 @@
-import { Bell, Bot, FlaskConical, Info, KeyRound, ShieldCheck, SlidersHorizontal, UserRound, UsersRound } from 'lucide-react';
+import {
+  Bell,
+  Bot,
+  FlaskConical,
+  Info,
+  KeyRound,
+  Mail,
+  ShieldCheck,
+  SlidersHorizontal,
+  UserRound,
+  UsersRound,
+} from 'lucide-react';
 
 /**
  * Settings, one page per topic (canvas board 23). The page list, each
@@ -11,6 +22,7 @@ import { Bell, Bot, FlaskConical, Info, KeyRound, ShieldCheck, SlidersHorizontal
 export type SettingsPageId =
   | 'general'
   | 'account'
+  | 'invites'
   | 'agents'
   | 'spaces'
   | 'notifications'
@@ -34,6 +46,7 @@ export const SETTINGS_PAGES: readonly SettingsPageMeta[] = [
     icon: SlidersHorizontal,
   },
   { id: 'account', title: 'Account', lede: 'Who you are signed in as on this computer.', icon: UserRound },
+  { id: 'invites', title: 'Invites', lede: 'Spaces people have invited you to.', icon: Mail },
   {
     id: 'agents',
     title: 'Agents',
@@ -89,6 +102,7 @@ export const SETTINGS_ROWS: readonly SettingsRowEntry[] = [
     label: 'Delete account',
     description: 'Deletes your account after 7 days. Signing back in before then cancels it.',
   },
+  { id: 'invites', page: 'invites', label: 'Invites', description: 'Accept or decline an invite to a space.' },
   { id: 'agents-list', page: 'agents', label: 'Agents', description: 'Claude, Codex and the other agents Rig can run.' },
   {
     id: 'ask-before-acting',

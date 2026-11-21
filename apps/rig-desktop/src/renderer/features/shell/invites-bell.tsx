@@ -35,15 +35,15 @@ import { MY_INVITES_KEY_PREFIX, type MyInviteRow } from './invites-inbox';
  * search actually ran against (`emptyInvitesMessage`), via the same
  * `rpc.rig.account.me()` read the topbar identity pill already makes.
  */
-export function InviteRow({
-  row,
-  onOpenPath,
-  onClose,
-}: {
-  row: MyInviteRow;
-  onOpenPath: (path: string) => void;
-  onClose: () => void;
-}) {
+/**
+ * What an invite's row does, wherever it is drawn (the bell's list, Settings › Account): accept
+ * and set the space up here, decline, and retry the set-up when only that half failed.
+ */
+export function useInviteActions(
+  row: MyInviteRow,
+  onOpenPath: (path: string) => void,
+  onClose: () => void
+) {
   const queryClient = useQueryClient();
   const [phase, setPhase] = useState<'idle' | 'joining' | 'declining' | 'joined'>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +108,24 @@ export function InviteRow({
     setSetupError(await attach());
     setSettingUp(false);
   };
+
+  return { phase, error, settingUp, setupError, accept, decline, setUpLocally };
+}
+
+export function InviteRow({
+  row,
+  onOpenPath,
+  onClose,
+}: {
+  row: MyInviteRow;
+  onOpenPath: (path: string) => void;
+  onClose: () => void;
+}) {
+  const { phase, error, settingUp, setupError, accept, decline, setUpLocally } = useInviteActions(
+    row,
+    onOpenPath,
+    onClose
+  );
 
   return (
     <div className="flex flex-col gap-1.5 px-1.5 py-1.5">

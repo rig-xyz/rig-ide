@@ -58,6 +58,22 @@ vi.mock('@renderer/lib/ipc', () => ({
           data: [space('b-ops', 'rig-ops'), space('b-launch', 'launch')],
         }),
       },
+      auth: { status: async () => ({ signedIn: true }) },
+      share: {
+        listMyInvites: async () => ({
+          success: true,
+          data: {
+            invites: ['i1', 'i2'].map((id) => ({
+              id,
+              role: 'editor',
+              createdAt: '2026-01-01T00:00:00Z',
+              expiresAt: null,
+              binding: { id: `b-${id}`, name: 'plans', kind: 'space' },
+              inviter: { name: 'Sam', email: null, avatarUrl: null },
+            })),
+          },
+        }),
+      },
       connectors: {
         list: async () => [
           { id: 'linear', state: 'connected' },
@@ -348,10 +364,23 @@ describe('NewHome', () => {
     expect(rows()).toEqual(all);
   });
 
+  it('invites waiting for you show as a count on your row at the foot of the rail, folded or open', async () => {
+    const you = () => rail().querySelector<HTMLElement>('[aria-label$=", your account, 2 invites"]');
+    await vi.waitFor(() => expect(you()).toBeTruthy(), { timeout: 3000 });
+    // Folded: the count sits on the corner of your photo (here, your initial).
+    expect(you()!.textContent).toBe('D2');
+    await click(button(rail(), 'Open the sidebar'));
+    // Open: your name, then the count.
+    expect(you()!.textContent).toMatch(/\D2$/);
+    // With invites waiting, your row opens the page that lists them.
+    await click(you());
+    expect(settingsOpened).toEqual(['invites']);
+  });
+
   it('you and Settings sit at the foot of the rail', async () => {
-    await click(rail().querySelector('[aria-label="Dylan Bourgeois, your account"]'));
+    await click(rail().querySelector('[aria-label*=", your account"]'));
     await click(button(rail(), 'Settings'));
-    expect(settingsOpened).toEqual(['account', undefined]);
+    expect(settingsOpened).toEqual(['invites', undefined]);
   });
 
   it('the Feed folds into a tray with its counts and no pills, and the tray opens it again', async () => {

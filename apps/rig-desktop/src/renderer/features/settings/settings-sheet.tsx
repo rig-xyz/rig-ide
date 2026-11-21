@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
 import { AboutPage } from './pages/about-page';
 import { AccountPage } from './pages/account-page';
+import { InvitesPage } from './pages/invites-page';
 import { AdvancedPage } from './pages/advanced-page';
 import { AgentsPage } from './pages/agents-page';
 import { GeneralPage, type ThemePreference } from './pages/general-page';
@@ -35,12 +36,15 @@ export function SettingsSheet({
   themePreference,
   onSetThemePreference,
   initialPage = null,
+  onOpenPath,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   themePreference: ThemePreference;
   onSetThemePreference: (next: ThemePreference) => void;
   initialPage?: SettingsPageId | null;
+  /** Opens a space's folder: an invite accepted on the Invites page opens what it was to. */
+  onOpenPath?: (path: string) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -55,6 +59,8 @@ export function SettingsSheet({
           initialPage={initialPage}
           themePreference={themePreference}
           onSetThemePreference={onSetThemePreference}
+          onOpenPath={onOpenPath ?? noop}
+          onClose={() => onOpenChange(false)}
         />
       </DialogContent>
     </Dialog>
@@ -66,10 +72,14 @@ function SettingsBody({
   initialPage,
   themePreference,
   onSetThemePreference,
+  onOpenPath,
+  onClose,
 }: {
   initialPage: SettingsPageId | null;
   themePreference: ThemePreference;
   onSetThemePreference: (next: ThemePreference) => void;
+  onOpenPath: (path: string) => void;
+  onClose: () => void;
 }) {
   const [page, setPage] = useState<SettingsPageId>(() => initialPage ?? readLastSettingsPage());
   const [query, setQuery] = useState('');
@@ -120,7 +130,13 @@ function SettingsBody({
                 </h2>
                 <p className="text-text-muted mt-1.5 mb-5 text-[13px]">{meta.lede}</p>
                 <SettingsHighlightContext.Provider value={highlight}>
-                  <SettingsPage page={page} themePreference={themePreference} onSetThemePreference={onSetThemePreference} />
+                  <SettingsPage
+                    page={page}
+                    themePreference={themePreference}
+                    onSetThemePreference={onSetThemePreference}
+                    onOpenPath={onOpenPath}
+                    onClose={onClose}
+                  />
                 </SettingsHighlightContext.Provider>
               </section>
             )}
@@ -135,16 +151,22 @@ function SettingsPage({
   page,
   themePreference,
   onSetThemePreference,
+  onOpenPath,
+  onClose,
 }: {
   page: SettingsPageId;
   themePreference: ThemePreference;
   onSetThemePreference: (next: ThemePreference) => void;
+  onOpenPath: (path: string) => void;
+  onClose: () => void;
 }) {
   switch (page) {
     case 'general':
       return <GeneralPage themePreference={themePreference} onSetThemePreference={onSetThemePreference} />;
     case 'account':
       return <AccountPage />;
+    case 'invites':
+      return <InvitesPage onOpenPath={onOpenPath} onClose={onClose} />;
     case 'agents':
       return <AgentsPage />;
     case 'spaces':
@@ -194,3 +216,5 @@ function SearchResults({ query, onPick }: { query: string; onPick: (row: Setting
     </section>
   );
 }
+
+function noop(): void {}

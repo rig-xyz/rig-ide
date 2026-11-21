@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
+import { useMyInvites } from '@renderer/features/shell/use-my-invites';
 import { rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import { PRODUCT_NAME } from '@shared/app-identity';
@@ -22,6 +23,7 @@ export function SettingsRail({
     queryFn: () => rpc.app.getAppVersion(),
   });
   const searching = query.trim().length > 0;
+  const invites = useMyInvites().rows?.length ?? 0;
 
   return (
     <nav aria-label="Settings" className="border-border-hairline flex w-[248px] shrink-0 flex-col gap-3 border-r px-3 pt-4 pb-3">
@@ -53,7 +55,17 @@ export function SettingsRail({
                 )}
               >
                 <Icon className="size-4 shrink-0" strokeWidth={1.5} />
-                {title}
+                <span className="min-w-0 flex-1 truncate">{title}</span>
+                {/* How many invites wait for you, as on your row at the foot of the sidebar. */}
+                {id === 'invites' && invites > 0 && (
+                  <span
+                    className="bg-accent text-accent-ink h-[18px] min-w-[18px] rounded-[9px] px-[5px] text-center text-kicker leading-[18px] font-semibold"
+                    aria-label={`${invites} waiting`}
+                    data-testid="settings-invites-count"
+                  >
+                    {invites}
+                  </span>
+                )}
               </button>
             </li>
           );

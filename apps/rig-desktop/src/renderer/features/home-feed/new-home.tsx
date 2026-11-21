@@ -30,7 +30,7 @@ export function NewHome({
 }: {
   onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
   onContinueSession: (path: string, sessionId: string) => void;
-  onOpenSettings: (page?: 'account' | 'about') => void;
+  onOpenSettings: (page?: 'account' | 'invites' | 'about') => void;
   updateReady: boolean;
   /** Show the scripted demo while there is no real Feed (dev only; tests). */
   demo?: boolean;
@@ -86,7 +86,7 @@ function HomeLayout({
 }: {
   you: RailYou;
   updateReady: boolean;
-  onOpenSettings: (page?: 'account' | 'about') => void;
+  onOpenSettings: (page?: 'account' | 'invites' | 'about') => void;
 }) {
   const { state, dispatch } = useHome();
   const folded = state.feedCollapsed;

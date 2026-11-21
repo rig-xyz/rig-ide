@@ -113,7 +113,11 @@ import { cn } from '@renderer/lib/utils';
 import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import { FIRST_RUN_VERSION } from '@shared/rig/first-run';
-import { rigOpenSpaceAtChannel, type OpenSpaceAt } from '@shared/rig/notifications';
+import {
+  rigOpenInvitesChannel,
+  rigOpenSpaceAtChannel,
+  type OpenSpaceAt,
+} from '@shared/rig/notifications';
 import {
   type RigSettings,
   type RigSettingsLegacyImport,
@@ -310,6 +314,13 @@ export function App() {
     setSettingsPage(page ?? null);
     setSettingsOpen(true);
   }, []);
+  // A click on an invite's notification shows the invites. With Rig Alpha they are listed in
+  // Settings › Invites (the Activity bell, which listens for the same click, is put away).
+  const invitesInSettings = useAlphaEnabled();
+  useEffect(() => {
+    if (!invitesInSettings) return;
+    return events.on(rigOpenInvitesChannel, () => openSettings('invites'));
+  }, [invitesInSettings, openSettings]);
   // An agent older than Rig is tested with: a toast once per version, pointing at Settings › Agents.
   const openAgentsSettings = useCallback(() => openSettings('agents'), [openSettings]);
   useAgentMinimumAlert(openAgentsSettings);
@@ -1601,6 +1612,7 @@ export function App() {
           themePreference={themePreference}
           onSetThemePreference={setThemePreference}
           initialPage={settingsPage}
+          onOpenPath={(path) => void openPath(path)}
         />
       </>
     );
@@ -1740,6 +1752,7 @@ export function App() {
         themePreference={themePreference}
         onSetThemePreference={setThemePreference}
         initialPage={settingsPage}
+        onOpenPath={(path) => void openPath(path)}
       />
       {/* `rig://join/<secret>` from the website's invite page: confirm, then join and open. */}
       <DeepLinkJoinDialog

@@ -2,6 +2,7 @@ import { Home as HomeIcon, PanelLeftClose, PanelLeftOpen, Search, Settings, X } 
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { NewSpaceCta } from '@renderer/features/home/new-space-cta';
 import { startSpaceSetup } from '@renderer/features/spaces/space-setup-store';
+import { useMyInvites } from '@renderer/features/shell/use-my-invites';
 import { stepMatrix, untilInWords } from '@renderer/features/views/space-status';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
@@ -37,7 +38,7 @@ export function Rail({
 }: {
   you: RailYou;
   updateReady: boolean;
-  onOpenSettings: (page?: 'account' | 'about') => void;
+  onOpenSettings: (page?: 'account' | 'invites' | 'about') => void;
 }) {
   const { state, dispatch, spaces, counts, open, openInApp, openPath } = useHome();
   const collapsed = state.collapsed;
@@ -255,7 +256,11 @@ export function Rail({
   );
 }
 
-/** You and Settings, at the foot of the rail: your photo opens your account, the gear opens Settings. */
+/**
+ * You and Settings, at the foot of the rail: your photo opens your account, the gear opens
+ * Settings. Invites waiting for you show as a count on your row, which then opens the page that
+ * lists them (Settings › Invites).
+ */
 function You({
   you,
   collapsed,
@@ -265,9 +270,11 @@ function You({
   you: RailYou;
   collapsed: boolean;
   updateReady: boolean;
-  onOpenSettings: (page?: 'account' | 'about') => void;
+  onOpenSettings: (page?: 'account' | 'invites' | 'about') => void;
 }) {
   const name = you.name ?? 'You';
+  const invites = useMyInvites().rows?.length ?? 0;
+  const invitesWord = `${invites} ${invites === 1 ? 'invite' : 'invites'}`;
   const gear = (
     <IconButton
       label={updateReady ? 'Settings, update ready' : 'Settings'}
@@ -285,12 +292,14 @@ function You({
       <div className="grid justify-items-center gap-1 pt-1 pb-3">
         <button
           type="button"
-          aria-label={`${name}, your account`}
-          title={name}
-          onClick={() => onOpenSettings('account')}
-          className="hf-rail-item grid size-9 place-items-center rounded-full hover:bg-bg-2"
+          aria-label={invites > 0 ? `${name}, your account, ${invitesWord}` : `${name}, your account`}
+          title={invites > 0 ? `${name}: ${invitesWord} for you` : name}
+          onClick={() => onOpenSettings(invites > 0 ? 'invites' : 'account')}
+          className="hf-rail-item relative grid size-9 place-items-center rounded-full hover:bg-bg-2"
         >
           {face}
+          {/* On the corner of your photo, as Home's count sits on its icon above. */}
+          {invites > 0 && <Count n={invites} accent className="absolute -top-1 -right-1.5" />}
         </button>
         {gear}
       </div>
@@ -300,12 +309,14 @@ function You({
     <div className="flex items-center gap-1 px-3 pt-1 pb-3">
       <button
         type="button"
-        onClick={() => onOpenSettings('account')}
-        title="Your account"
+        onClick={() => onOpenSettings(invites > 0 ? 'invites' : 'account')}
+        title={invites > 0 ? `${invitesWord} for you` : 'Your account'}
+        aria-label={invites > 0 ? `${name}, your account, ${invitesWord}` : undefined}
         className="hf-rail-item flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-[9px] pr-2 pl-2 text-left hover:bg-bg-2"
       >
         {face}
-        <span className="truncate text-ui font-medium">{name}</span>
+        <span className="min-w-0 flex-1 truncate text-ui font-medium">{name}</span>
+        {invites > 0 && <Count n={invites} accent />}
       </button>
       {gear}
     </div>

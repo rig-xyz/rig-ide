@@ -178,7 +178,7 @@ describe('SettingsSheet', () => {
     expect(railButton('general').getAttribute('aria-current')).toBe('page');
     expect(railButton('general').className).toContain('glass-selected');
     const pages = Array.from(document.querySelectorAll<HTMLElement>('[data-settings-page]')).map((b) => b.textContent);
-    expect(pages).toEqual(['General', 'Account', 'Agents', 'Spaces', 'Notifications', 'Sign-ins', 'Privacy', 'Advanced', 'About']);
+    expect(pages).toEqual(['General', 'Account', 'Invites', 'Agents', 'Spaces', 'Notifications', 'Sign-ins', 'Privacy', 'Advanced', 'About']);
     expect(document.querySelector('[data-testid="settings-rail-version"]')?.textContent).toContain('0.0.0-test');
   });
 
