@@ -27,17 +27,29 @@ const supported = (platform: NodeJS.Platform) => platform === 'darwin' || platfo
  */
 export function applyOpenAtLogin(app: LoginApp, platform: NodeJS.Platform, enabled: boolean): boolean {
   if (!app.isPackaged || !supported(platform)) return false;
-  if (platform === 'darwin' && !app.isInApplicationsFolder()) return false;
-  app.setLoginItemSettings({
-    openAtLogin: enabled,
-    ...(platform === 'win32' ? { args: [OPENED_AT_LOGIN_ARG] } : {}),
-  });
-  return true;
+  // The system can refuse (a managed Mac, a login item the person removed by hand). Rig then
+  // simply does not open at login: this runs while the app starts, and must never stop it.
+  try {
+    if (platform === 'darwin' && !app.isInApplicationsFolder()) return false;
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      ...(platform === 'win32' ? { args: [OPENED_AT_LOGIN_ARG] } : {}),
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Whether this run was started by the login and not by the person: then no window is opened for it. */
 export function openedAtLogin(app: LoginApp, platform: NodeJS.Platform, argv: readonly string[]): boolean {
   if (!app.isPackaged) return false;
-  if (platform === 'darwin') return app.getLoginItemSettings().wasOpenedAtLogin === true;
-  return platform === 'win32' && argv.includes(OPENED_AT_LOGIN_ARG);
+  if (platform === 'win32') return argv.includes(OPENED_AT_LOGIN_ARG);
+  if (platform !== 'darwin') return false;
+  // Not knowing means the person gets their window, as before.
+  try {
+    return app.getLoginItemSettings().wasOpenedAtLogin === true;
+  } catch {
+    return false;
+  }
 }

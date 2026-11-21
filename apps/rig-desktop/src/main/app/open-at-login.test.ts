@@ -35,6 +35,20 @@ describe('open Rig at login', () => {
     expect(elsewhere.setLoginItemSettings).not.toHaveBeenCalled();
   });
 
+  it('never stops the app from starting when the system refuses or cannot answer', () => {
+    const refusing = app();
+    refusing.setLoginItemSettings.mockImplementation(() => {
+      throw new Error('Operation not permitted');
+    });
+    expect(applyOpenAtLogin(refusing, 'darwin', true)).toBe(false);
+    const silent = app();
+    silent.getLoginItemSettings.mockImplementation(() => {
+      throw new Error('no answer');
+    });
+    // Not knowing: the window opens, as it always did.
+    expect(openedAtLogin(silent, 'darwin', [])).toBe(false);
+  });
+
   it('knows a run the login started from one the person started', () => {
     expect(openedAtLogin(app({ wasOpenedAtLogin: true }), 'darwin', [])).toBe(true);
     expect(openedAtLogin(app(), 'darwin', [])).toBe(false);
