@@ -4,6 +4,8 @@ import {
   DEFAULT_NOTIFICATION_PREFS,
   bellUnread,
   dockCount,
+  dockCountWithoutBell,
+  spacesWaiting,
   normalizeNotificationPrefs,
   directPhrase,
   openTargetOf,
@@ -145,5 +147,33 @@ describe('directPhrase', () => {
     expect(directPhrase(row({ type: 'comment', tier: 'direct', actor: { kind: 'guest', userId: null, name: null, agent: null } }))).toBe(
       'A guest commented on your link'
     );
+  });
+});
+
+describe('the counts with the bell put away', () => {
+  const space = (bindingId: string, directUnread: number, spaceUnread = 0) => ({
+    bindingId,
+    name: null,
+    latestDirect: null,
+    level: 'all' as const,
+    lastReadSeq: 0,
+    spaceUnread,
+    directUnread,
+    directUnreadNoMessage: 0,
+  });
+  const summary = {
+    spaces: [space('a', 2, 40), space('b', 1), space('c', 0, 7)],
+    invitesUnread: 0,
+    directUnreadTotal: 3,
+  };
+
+  it('what waits in your spaces is the rows about you, never plain new messages', () => {
+    expect(spacesWaiting(summary)).toBe(3);
+    expect(spacesWaiting({ ...summary, spaces: [] })).toBe(0);
+  });
+
+  it('the Dock is that plus the invites waiting for an answer', () => {
+    expect(dockCountWithoutBell(summary, 2)).toBe(5);
+    expect(dockCountWithoutBell(summary, 0)).toBe(3);
   });
 });

@@ -75,6 +75,7 @@ export function useRealSpaces(): {
     const statusList = status.data?.success ? status.data.data : [];
     const statusBy = new Map(statusList.map((s) => [s.bindingId, s]));
     const unreadBy = new Map(summary.spaces.map((s) => [s.bindingId, s.spaceUnread]));
+    const waitingBy = new Map(summary.spaces.map((s) => [s.bindingId, s.directUnread]));
     return orderSpacesByActivity(
       (bindings ?? []).map((binding, i) => {
         const listed = members[i]?.data;
@@ -85,6 +86,7 @@ export function useRealSpaces(): {
               path: localById.get(binding.id) ?? resolved.data?.[binding.id] ?? null,
               members: listed?.success ? listed.data : null,
               unread: unreadBy.get(binding.id) ?? 0,
+              waiting: waitingBy.get(binding.id) ?? 0,
               status: statusBy.get(binding.id),
               chats: (chats.data ?? [])
                 .filter((c) => c.rigBindingId === binding.id)

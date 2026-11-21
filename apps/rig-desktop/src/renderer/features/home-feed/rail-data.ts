@@ -14,6 +14,8 @@ export interface RealSpaceInput {
   path: string | null;
   members: readonly { userId: string; name: string | null; avatarUrl?: string | null }[] | null;
   unread: number;
+  /** Unread rows about you in the space (the notifications summary's `directUnread`). */
+  waiting?: number;
   status: RigSpaceStatus | undefined;
   /** `live`: the chat is running in this window right now (working, or waiting on the person). */
   /** `unseen`: it finished with an answer the person has not looked at yet. */
@@ -209,6 +211,7 @@ export function realSpaceToRail(
     visibility: shared ? 'shared' : 'private',
     faces,
     unread: input.unread,
+    waiting: input.waiting ?? 0,
     summary: shared
       ? `With ${others.map((m) => (m.name ?? 'a member').split(' ')[0]).join(', ') || 'your team'}.`
       : 'Only you.',

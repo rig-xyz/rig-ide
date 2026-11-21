@@ -35,6 +35,13 @@ import { MY_INVITES_KEY_PREFIX, type MyInviteRow } from './invites-inbox';
  * search actually ran against (`emptyInvitesMessage`), via the same
  * `rpc.rig.account.me()` read the topbar identity pill already makes.
  */
+/** The Dock's number counts invites (with the bell put away): one answered, it counts again. */
+function recountDock(): void {
+  void Promise.resolve()
+    .then(() => rpc.rig.notifications.refresh())
+    .catch(() => undefined);
+}
+
 /**
  * What an invite's row does, wherever it is drawn (the bell's list, Settings › Account): accept
  * and set the space up here, decline, and retry the set-up when only that half failed.
@@ -80,6 +87,7 @@ export function useInviteActions(
     // list, and this invite will drop from the next list read.
     void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
     void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
+    recountDock();
     const attachError = await attach();
     // Accepted but not set up here: the joined row stays, with the error
     // and a "Set up locally" retry, so the outcome is legible.
@@ -100,6 +108,7 @@ export function useInviteActions(
     }
     // No ceremony: the per-user hide is done; the row disappears with the list.
     void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
+    recountDock();
   };
 
   const setUpLocally = async () => {

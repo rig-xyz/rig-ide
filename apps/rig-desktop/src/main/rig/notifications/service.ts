@@ -3,6 +3,7 @@ import {
   BELL_PAGE,
   decideBanner,
   dockCount,
+  dockCountWithoutBell,
   EMPTY_NOTIFICATION_SUMMARY,
   type NotificationPrefs,
   type RigNotification,
@@ -52,6 +53,13 @@ export type NotificationServiceDeps = {
   now: () => number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   log: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  /**
+   * Rig Alpha is on, so the bell is put away and the Dock counts invites and spaces instead
+   * (`dockCountWithoutBell`). Absent: never.
+   */
+  bellPutAway?: () => boolean;
+  /** How many invites wait for the person's answer; null when that can't be read. */
+  pendingInvites?: () => Promise<number | null>;
   /** The orchestrator's Feed changed on the relay (`feed_changed`); absent: ignored. */
   onFeedChanged?: () => void;
 };
@@ -80,6 +88,8 @@ export class NotificationService {
   private startedAt = 0;
   /** Rows that came in while you were away (no rig window focused, or rig closed), newest last. */
   private away = new Set<string>();
+  /** Invites waiting for an answer, as last read (the Dock's count with the bell put away); null: not known. */
+  private invites: number | null = null;
   /** The bell's own page of rows about you, for the Dock badge; null until read. */
   private bellRows: RigNotification[] | null = null;
 
@@ -307,19 +317,34 @@ export class NotificationService {
     if (!res.success || this.account !== account) return;
     this.summaryCache = res.data;
     this.bellRows = rows.success ? rows.data : null;
+    if (this.deps.bellPutAway?.()) {
+      const invites = (await this.deps.pendingInvites?.().catch(() => null)) ?? null;
+      if (this.account !== account) return;
+      this.invites = invites;
+    }
     this.applyBadge();
     this.deps.emitChanged('notification');
   }
 
-  /** The Dock shows what the bell keeps for you (`dockCount`). */
+  /**
+   * The Dock shows what the bell keeps for you (`dockCount`). With the bell put away (Rig Alpha)
+   * it shows invites plus what waits in your spaces; an invite count that could not be read
+   * falls back to the unread invite rows.
+   */
   private applyBadge(): void {
+    if (!this.deps.prefs().dockBadge) return this.deps.setBadge(0);
+    if (this.deps.bellPutAway?.()) {
+      const invites = this.invites ?? this.summaryCache.invitesUnread;
+      return this.deps.setBadge(dockCountWithoutBell(this.summaryCache, invites));
+    }
     const bell = this.bellRows ? { rows: this.bellRows, ctx: { selfUserId: this.account, awayIds: this.away } } : null;
-    this.deps.setBadge(this.deps.prefs().dockBadge ? dockCount(this.summaryCache, bell) : 0);
+    this.deps.setBadge(dockCount(this.summaryCache, bell));
   }
 
   private signedOut(): void {
     this.account = null;
     this.away.clear();
+    this.invites = null;
     this.bellRows = null;
     this.summaryCache = EMPTY_NOTIFICATION_SUMMARY;
     this.deps.presenter.closeAll();

@@ -100,6 +100,8 @@ export interface RailSpace {
   visibility: 'private' | 'shared';
   faces: Person[];
   unread: number;
+  /** Unread rows about you here (a mention, a reply, your agent finishing, a request); absent: none. */
+  waiting?: number;
   summary: string;
   sessions: RailSession[];
   /** The space's page lists more of its finished chats than the rail does; absent: same as `sessions`. */
@@ -250,4 +252,22 @@ export function sessionStatusWord(state: SessionState): {
     case 'idle':
       return { text: 'Idle', tone: 'muted' };
   }
+}
+
+/**
+ * A space whose name shows in bold in the sidebar: something in it is unread or is about you (your
+ * agent finished there, someone mentioned you), or a session there waits on you. A group that
+ * holds such a space is bold too, so it is not missed while folded.
+ */
+export function spaceIsLoud(space: Pick<RailSpace, 'unread' | 'waiting' | 'sessions'>): boolean {
+  return (
+    space.unread > 0 ||
+    (space.waiting ?? 0) > 0 ||
+    space.sessions.some((s) => s.state === 'needs_you')
+  );
+}
+
+/** What waits for you across these spaces: the count on the sidebar's Spaces line. */
+export function spacesWaitingCount(spaces: readonly Pick<RailSpace, 'waiting'>[]): number {
+  return spaces.reduce((total, space) => total + (space.waiting ?? 0), 0);
 }

@@ -21,6 +21,8 @@ function setup(
     /** The bell's page (`tier: 'direct'`); absent, the relay can't answer it. */
     bellRows?: RigNotification[];
     onFeedChanged?: () => void;
+    /** Rig Alpha: the bell is put away, with this many invites waiting (null: can't be read). */
+    bellPutAway?: { invites: number | null };
   } = {}
 ) {
   let rows = opts.rows ?? [];
@@ -80,6 +82,9 @@ function setup(
     sleep: () => new Promise((r) => setTimeout(r, 0)),
     log: { warn: () => {} },
     onFeedChanged: opts.onFeedChanged,
+    ...(opts.bellPutAway
+      ? { bellPutAway: () => true, pendingInvites: async () => opts.bellPutAway!.invites }
+      : {}),
   };
   const service = new NotificationService(deps);
   return {
@@ -171,6 +176,44 @@ describe('NotificationService', () => {
     t.setPrefs({ ...DEFAULT_NOTIFICATION_PREFS, dockBadge: false });
     t.service.prefsChanged();
     expect(t.badges.at(-1)).toBe(0);
+  });
+
+  it('with the bell put away, the Dock is invites waiting plus what waits in your spaces', async () => {
+    const space = (bindingId: string, directUnread: number, spaceUnread = 0) => ({
+      bindingId,
+      name: null,
+      latestDirect: null,
+      level: 'all' as const,
+      lastReadSeq: 0,
+      spaceUnread,
+      directUnread,
+      directUnreadNoMessage: 0,
+    });
+    const summary = {
+      // Plain new messages (40 here) are on the space's own row, never on the Dock.
+      spaces: [space('bnd_a', 2, 40), space('bnd_b', 1), space('bnd_c', 0, 7)],
+      invitesUnread: 5,
+      directUnreadTotal: 9,
+    };
+    // The bell's own rows would say 1: with the bell put away they are not what the Dock counts.
+    const bellRows = [row({ id: '1', type: 'mention', tier: 'direct' })];
+    const t = setup({ cursor: '0', summary, bellRows, bellPutAway: { invites: 2 } });
+    current = t;
+    t.service.start();
+    await t.connected();
+    await vi.waitFor(() => expect(t.badges.at(-1)).toBe(2 + 3));
+    t.setPrefs({ ...DEFAULT_NOTIFICATION_PREFS, dockBadge: false });
+    t.service.prefsChanged();
+    expect(t.badges.at(-1)).toBe(0);
+  });
+
+  it('with the bell put away and the invites unreadable, the Dock falls back to the unread invite rows', async () => {
+    const summary = { spaces: [], invitesUnread: 1, directUnreadTotal: 1 };
+    const t = setup({ cursor: '0', summary, bellPutAway: { invites: null } });
+    current = t;
+    t.service.start();
+    await t.connected();
+    await vi.waitFor(() => expect(t.badges.at(-1)).toBe(1));
   });
 
   it("shows the bell's count on the Dock: unread rows it keeps, not every unread row about you", async () => {

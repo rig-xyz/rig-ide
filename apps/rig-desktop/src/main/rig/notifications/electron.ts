@@ -167,6 +167,12 @@ export const notificationService = new NotificationService({
   stream: readSse,
   presenter,
   setBadge,
+  bellPutAway: () => rigSettingsStore.get().alphaEnabled === true,
+  // Imported when asked: the share controller's own imports reach back to this module.
+  pendingInvites: async () => {
+    const listed = await (await import('../rig-share')).rigShareController.listMyInvites();
+    return listed.success ? listed.data.invites.length : null;
+  },
   emitChanged: (reason) => events.emit(rigNotificationsChangedChannel, { reason }),
   onFeedChanged: () => {
     events.emit(rigFeedChangedChannel, { reason: 'relay' });
@@ -260,6 +266,8 @@ export const rigNotificationsController = createRPCController({
     notificationService.refresh();
     return res;
   },
+  /** Counts again now: an invite was just accepted or declined, and the Dock's number includes invites. */
+  refresh: (): void => notificationService.refresh(),
   /** The rows that came in while you were away (`NotificationService.arrivedWhileAway`). */
   arrivedWhileAway: (): string[] => notificationService.arrivedWhileAway(),
   /** The space on screen in a focused window (`null`: none), for focus suppression. */

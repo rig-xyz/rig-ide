@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { type ReactNode, useEffect, useRef } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
-import { IconButton, Kicker } from './bits';
+import { Count, IconButton, Kicker } from './bits';
 import { CatchUpStrip } from './catch-up-strip';
 import { FeedEmpty } from './catch-me-up';
 import { ConnectorsView } from './connectors-view';
@@ -126,12 +126,16 @@ export function Feed({
   );
 }
 
-/** The real Feed's title: a heading, with the amber dot while something needs you. */
+/** The real Feed's title: a heading, with how many cards need you (the same count pill as the sidebar's). */
 function FeedTitle({ needsYou }: { needsYou: number }) {
   return (
     <h2 className="m-0 flex items-center gap-2 font-display text-[15px] font-semibold tracking-[-0.01em] text-text-primary">
       Feed
-      {needsYou > 0 && <NeedsYouDot count={needsYou} />}
+      {needsYou > 0 && (
+        <span className="flex font-sans tracking-normal" aria-label={`${needsYou} need you`}>
+          <Count n={needsYou} accent />
+        </span>
+      )}
     </h2>
   );
 }

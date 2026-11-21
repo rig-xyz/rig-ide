@@ -124,7 +124,8 @@ vi.mock('@renderer/lib/ipc', () => ({
       },
       notifications: {
         summary: async () => ({
-          spaces: [{ bindingId: 'b-ops', spaceUnread: 4 }],
+          // rig-ops: four new messages, and two rows about you (your agent finished, a mention).
+          spaces: [{ bindingId: 'b-ops', spaceUnread: 4, directUnread: 2 }],
           invitesUnread: 0,
           directUnreadTotal: 0,
         }),
@@ -330,6 +331,11 @@ describe('NewHome', () => {
     const name = (id: string) => rail().querySelector(`[data-rail-id="${id}"] .truncate`)!;
     expect(name('rig-ops').className).toContain('font-semibold');
     expect(name('b-launch').className).not.toContain('font-semibold');
+    // The group that holds the unread space is bold too, so it shows while the group is folded.
+    const internal = button(rail(), /Internal/)!;
+    expect(internal.className).toContain('font-semibold');
+    await click(internal);
+    expect(button(rail(), /Internal/)!.dataset.loud).toBe('true');
     expect(rail().querySelector('[data-rail-id="b-launch"] img')?.getAttribute('src')).toBe(
       'https://img.example/hugo.png'
     );
@@ -375,6 +381,18 @@ describe('NewHome', () => {
     // With invites waiting, your row opens the page that lists them.
     await click(you());
     expect(settingsOpened).toEqual(['invites']);
+  });
+
+  it('counts what waits in your spaces on the Spaces line, and nothing on Home', async () => {
+    await click(button(rail(), 'Open the sidebar'));
+    const count = () => rail().querySelector<HTMLElement>('[data-testid="rail-spaces-count"]');
+    await vi.waitFor(() => expect(count()).toBeTruthy(), { timeout: 3000 });
+    expect(count()!.textContent).toBe('2');
+    expect(count()!.getAttribute('aria-label')).toBe('2 waiting in your spaces');
+    const home = button(rail(), 'Home')!;
+    expect(home.textContent).toBe('Home');
+    // What needs you is counted on the Feed itself.
+    expect(host.querySelector('aside [aria-label="2 need you"]')).toBeTruthy();
   });
 
   it('you and Settings sit at the foot of the rail', async () => {

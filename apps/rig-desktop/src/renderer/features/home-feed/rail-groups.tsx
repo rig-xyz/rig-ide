@@ -8,14 +8,16 @@ import {
 import { useHomeLayout } from '@renderer/features/home/use-home-layout';
 import { cn } from '@renderer/lib/utils';
 import { type HomeLayout, newGroupId } from '@shared/rig/home-layout';
-import type { RailSpace } from './model';
+import { spaceIsLoud, type RailSpace } from './model';
 
 /**
  * The rail's spaces in your groups: the same groups as the Spaces card on
  * the current Home (`@shared/rig/home-layout`, kept on your account), so
  * both Homes show one arrangement. A group folds under its header; drag a
  * space onto a header to move it there; drag a group's header onto another
- * group's to put it in that place; double-click a group's name to rename it. Spaces only the Feed knows about (the preview's demo ones)
+ * group's to put it in that place; double-click a group's name to rename it.
+ * A group's name is bold while a space in it is (something unread, or a
+ * session waiting on you), so a folded group still says something is there. Spaces only the Feed knows about (the preview's demo ones)
  * have no binding and sit in Ungrouped.
  */
 
@@ -96,6 +98,7 @@ export function SpaceGroups({
               title={section.title}
               count={section.rows.length}
               folded={section.collapsed}
+              loud={section.rows.some((row) => spaceIsLoud(row.space))}
               renaming={renaming === section.groupId}
               dropping={dropOn === section.key}
               onToggle={() =>
@@ -164,6 +167,7 @@ function GroupHeader({
   title,
   count,
   folded,
+  loud,
   renaming,
   dropping,
   onToggle,
@@ -179,6 +183,8 @@ function GroupHeader({
   title: string;
   count: number;
   folded: boolean;
+  /** A space in it has something unread or waiting on you: the name is bold, as that space's is. */
+  loud: boolean;
   renaming: boolean;
   dropping: boolean;
   onToggle: () => void;
@@ -264,7 +270,11 @@ function GroupHeader({
           onDoubleClick={onRename}
           title={onRename ? 'Double-click to rename' : undefined}
           // Its chevron and name line up with New group's plus and label below.
-          className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-[8px] pl-2.5 text-left text-ui font-medium text-text-secondary transition-colors hover:text-text-primary"
+          data-loud={loud || undefined}
+          className={cn(
+            'flex h-7 min-w-0 flex-1 items-center gap-2 rounded-[8px] pl-2.5 text-left text-ui transition-colors hover:text-text-primary',
+            loud ? 'font-semibold text-text-primary' : 'font-medium text-text-secondary'
+          )}
         >
           <ChevronDown
             className={cn(
@@ -274,7 +284,7 @@ function GroupHeader({
             strokeWidth={2}
           />
           <span className="truncate">{title}</span>
-          <span className="text-text-muted">{count}</span>
+          <span className="font-medium text-text-muted">{count}</span>
         </button>
       )}
       {onDelete && !renaming && (

@@ -8,7 +8,14 @@ import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { Count, Face, IconButton, SessionMatrix, StatusWord } from './bits';
 import { useHome } from './home-context';
-import { type RailSession, type RailSpace, sessionLabelTone, sessionStatusWord } from './model';
+import {
+  type RailSession,
+  type RailSpace,
+  sessionLabelTone,
+  sessionStatusWord,
+  spaceIsLoud,
+  spacesWaitingCount,
+} from './model';
 import { findSpaces } from './rail-data';
 import { SPACE_DRAG_TYPE, SpaceGroups } from './rail-groups';
 import { needsYouPhrase } from './say';
@@ -55,6 +62,7 @@ export function Rail({
   useEffect(() => {
     if (collapsed) setQuery(null);
   }, [collapsed]);
+  const waiting = spacesWaitingCount(spaces);
   const finding = !collapsed && query !== null && query.trim() !== '';
   const found = finding ? findSpaces(spaces, query) : [];
 
@@ -148,7 +156,7 @@ export function Rail({
         <RailButton
           collapsed={collapsed}
           current={state.selection.kind === 'home'}
-          label={counts.needsYou ? `Home, ${needsYouPhrase(counts.needsYou)}` : 'Home'}
+          label="Home"
           onClick={() => open({ kind: 'home' })}
           onPeek={(el) =>
             showPeek(
@@ -161,18 +169,11 @@ export function Rail({
           }
           className={collapsed ? 'size-9 justify-center' : 'h-9 gap-2.5 pr-2 pl-2.5'}
         >
+          {/* No count here: what needs you is counted on the Feed, what waits in spaces on the Spaces line. */}
           <span className="relative grid place-items-center">
             <HomeIcon className="size-[15px] text-text-secondary" strokeWidth={1.6} />
-            {collapsed && counts.needsYou > 0 && (
-              <Count n={counts.needsYou} accent className="absolute -top-3 -right-3.5" />
-            )}
           </span>
-          {!collapsed && (
-            <>
-              <span className="flex-1 text-ui font-medium">Home</span>
-              {counts.needsYou > 0 && <Count n={counts.needsYou} accent />}
-            </>
-          )}
+          {!collapsed && <span className="flex-1 text-ui font-medium">Home</span>}
         </RailButton>
       </div>
       <div
@@ -189,10 +190,22 @@ export function Rail({
             <div className="flex h-7 items-center gap-1.5 pr-1 pl-2.5 font-mono text-kicker font-medium tracking-[0.1em] whitespace-nowrap text-text-muted uppercase">
               Spaces
               <span className="tracking-normal text-text-muted/70">{spaces.length}</span>
+              {/* What waits for you in your spaces (your agent finished, a mention, a reply): the
+                  spaces it is in are bold below, and so are the groups that hold them. */}
+              {waiting > 0 && (
+                <span
+                  className="ml-auto flex font-sans tracking-normal normal-case"
+                  aria-label={`${waiting} waiting in your spaces`}
+                  title={`${waiting} waiting in your spaces`}
+                  data-testid="rail-spaces-count"
+                >
+                  <Count n={waiting} accent />
+                </span>
+              )}
               <IconButton
                 label="Find a space"
                 onClick={() => setQuery('')}
-                className="ml-auto size-6"
+                className={cn('size-6', waiting > 0 ? 'ml-1' : 'ml-auto')}
               >
                 <Search className="size-[14px]" strokeWidth={1.6} />
               </IconButton>
@@ -397,8 +410,8 @@ function SpaceEntry({
     );
   }
   // Bold while something in it is unread or waits on you, like the Spaces card.
-  const loud = space.unread > 0 || space.sessions.some((s) => s.state === 'needs_you');
-  const unreadDot = space.unread > 0 && (
+  const loud = spaceIsLoud(space);
+  const unreadDot = (space.unread > 0 || (space.waiting ?? 0) > 0) && (
     <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-accent" />
   );
   // A space that is a factory shows it: a grid moving while a pass is going there, idling while

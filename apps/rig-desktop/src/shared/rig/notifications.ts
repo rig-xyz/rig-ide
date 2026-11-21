@@ -220,6 +220,25 @@ export function dockCount(
   return bell ? bellUnread(bell.rows, bell.ctx) : summary.directUnreadTotal;
 }
 
+/**
+ * What waits for you in your spaces: the unread rows about you there (a mention, a reply, your
+ * agent finishing, a request), over every space. The count on the sidebar's Spaces line. Opening
+ * a space reads its rows, so the count goes down as the spaces are visited.
+ */
+export function spacesWaiting(summary: RigNotificationSummary): number {
+  return summary.spaces.reduce((total, space) => total + space.directUnread, 0);
+}
+
+/**
+ * The Dock badge with Rig Alpha on, where the Activity bell is put away: invites waiting for your
+ * answer, plus what waits in your spaces (`spacesWaiting`). Both have a place in the window: the
+ * count on your row at the foot of the sidebar (Settings › Invites) and the one on its Spaces
+ * line. The Feed's cards are not in it: the Feed carries its own count.
+ */
+export function dockCountWithoutBell(summary: RigNotificationSummary, invites: number): number {
+  return Math.max(0, invites) + spacesWaiting(summary);
+}
+
 export type BannerContext = {
   prefs: NotificationPrefs;
   /** The row's space level; `undefined` when unknown (treated as 'all'). */

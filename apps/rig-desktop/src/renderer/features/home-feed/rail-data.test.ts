@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { demoSpaces } from './mock';
-import { sessionMatrix } from './model';
+import { sessionMatrix, spaceIsLoud, spacesWaitingCount } from './model';
 import {
   findSpaces,
   mergeRail,
@@ -263,5 +263,35 @@ describe('findSpaces', () => {
 
   it('gives every space back, in order, when nothing is typed', () => {
     expect(names('  ')).toEqual(['warm-island', 'Acme bug fixes', 'x-factory']);
+  });
+});
+
+describe('what makes a space bold, and the count on the Spaces line', () => {
+  const space = (over: { unread?: number; waiting?: number; needsYou?: boolean } = {}) =>
+    realSpaceToRail(
+      {
+        bindingId: 'b1',
+        name: 'launch',
+        path: '/Users/me/Rig/launch',
+        members: null,
+        unread: over.unread ?? 0,
+        waiting: over.waiting,
+        status: undefined,
+        chats: over.needsYou ? [{ id: 'c1', title: 'Draft', updatedAt: 0, live: 'needs_you' }] : [],
+      },
+      'u1',
+      1_000
+    );
+
+  it('a space is bold for a new message, for a row about you (your agent finished), or a session waiting on you', () => {
+    expect(spaceIsLoud(space())).toBe(false);
+    expect(spaceIsLoud(space({ unread: 3 }))).toBe(true);
+    expect(spaceIsLoud(space({ waiting: 1 }))).toBe(true);
+    expect(spaceIsLoud(space({ needsYou: true }))).toBe(true);
+  });
+
+  it('the count is the rows about you over every space, not the new messages', () => {
+    expect(spacesWaitingCount([space({ waiting: 2, unread: 40 }), space({ waiting: 1 }), space({ unread: 7 })])).toBe(3);
+    expect(spacesWaitingCount([space(), ...demoSpaces()])).toBe(0);
   });
 });
