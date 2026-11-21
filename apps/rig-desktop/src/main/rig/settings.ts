@@ -192,6 +192,8 @@ function normalizeSettings(parsed: unknown): RigSettings {
     hiddenByRig: isBooleanRecord(raw.hiddenByRig) ? raw.hiddenByRig : {},
     showSystemFiles: raw.showSystemFiles === true,
     showPlainRigs: raw.showPlainRigs === true,
+    // On unless the person turned it off: a file from before the setting has it on.
+    openAtLogin: raw.openAtLogin !== false,
     alphaEnabled: raw.alphaEnabled === true,
     // Only a fresh install (no file: `DEFAULT_RIG_SETTINGS`) starts with the new Home on.
     newHomeEnabled: raw.newHomeEnabled === true,

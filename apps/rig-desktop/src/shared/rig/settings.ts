@@ -270,6 +270,12 @@ export type RigSettings = {
    */
   roomThemesEnabled: boolean;
   /**
+   * Settings › General › Open Rig when you log in (`main/app/open-at-login.ts`): Rig starts with
+   * the computer, with no window, so work on a schedule in a space runs without anyone opening
+   * Rig first. On by default, and for a settings file from before it existed.
+   */
+  openAtLogin: boolean;
+  /**
    * Settings › Advanced › Rig Alpha: the new Home and its Feed, the first run,
    * and Rig reading the person's tools in the background with their Claude
    * (on open, every hour, on wake). Off by default: with it off the app is
@@ -340,6 +346,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   spacesRoomSeesDefault: DEFAULT_ROOM_SEES,
   spacesChatView: 'flow',
   spacesRoomDiskCache: true,
+  openAtLogin: true,
   alphaEnabled: false,
   newHomeEnabled: true,
   roomThemesEnabled: true,

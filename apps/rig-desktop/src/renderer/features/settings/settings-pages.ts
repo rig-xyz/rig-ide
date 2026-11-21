@@ -89,6 +89,13 @@ export type SettingsRowEntry = { id: string; page: SettingsPageId; label: string
 /** Every fixed row, in page order. Lists that change (agents, sign-in sites) are found by their row's own label. */
 export const SETTINGS_ROWS: readonly SettingsRowEntry[] = [
   { id: 'theme', page: 'general', label: 'Theme', description: 'Match your Mac, or pick one.' },
+  {
+    id: 'open-at-login',
+    page: 'general',
+    label: 'Open Rig when you log in',
+    description:
+      'Rig starts with this computer, with no window, so work on a schedule in your spaces runs without you opening Rig first.',
+  },
   { id: 'signed-in', page: 'account', label: 'Signed in', description: 'The account Rig uses on this computer.' },
   {
     id: 'sign-out',

@@ -12,6 +12,7 @@ import { rigOpenRecentChannel } from '@shared/rig/workspace';
 import { handleDeepLinkArgv, installDeepLinkHandlers } from './app/deep-links';
 import { LIBSECRET_PASSWORD_STORE, shouldForceLibsecretBackend } from './app/linux-secret-storage';
 import { setupApplicationMenu } from './app/menu';
+import { applyOpenAtLogin, openedAtLogin } from './app/open-at-login';
 import { registerAppScheme, setupAppProtocol } from './app/protocol';
 import { registerQuitHandler } from './app/shutdown';
 import { applyNativeTheme, createMainWindow } from './app/window';
@@ -114,6 +115,8 @@ app.on('open-file', (event, path) => {
 
 app.on('second-instance', (_event, argv) => {
   const win = BrowserWindow.getAllWindows()[0];
+  // Opened at login there is no window yet: launching Rig again is asking for it.
+  if (!win && app.isReady()) createMainWindow();
   if (win?.isMinimized()) win.restore();
   win?.focus();
   // Windows/Linux: a `rig://` link opened while running arrives as the
@@ -204,6 +207,14 @@ void app.whenReady().then(async () => {
   rigSettingsStore.subscribe((settings) => {
     events.emit(rigSettingsChangedChannel, settings);
   });
+  // Open Rig when you log in (Settings › General): told to the system now, and whenever it changes.
+  let openAtLogin = rigSettingsStore.get().openAtLogin;
+  applyOpenAtLogin(app, process.platform, openAtLogin);
+  rigSettingsStore.subscribe((settings) => {
+    if (settings.openAtLogin === openAtLogin) return;
+    openAtLogin = settings.openAtLogin;
+    applyOpenAtLogin(app, process.platform, openAtLogin);
+  });
   // Pins and seen markers follow a renamed file or folder.
   onRigEntryMoved(createEntryMoveFollower(rigSettingsStore));
   startNotifications();
@@ -283,7 +294,9 @@ void app.whenReady().then(async () => {
   // Space files as pages (`rig-file://`), before any page panel loads one.
   void import('./rig/pages/agent-pages').then((m) => m.rigFilesSession());
   setupApplicationMenu();
-  createMainWindow();
+  // Opened by the login, Rig is there for its schedules: the window waits until the person asks
+  // for it (the Dock's `activate` below, a notification, a link, a second launch).
+  if (!openedAtLogin(app, process.platform, process.argv)) createMainWindow();
 
   // A restart ends every sync daemon and nothing else brings them back:
   // start each signed-in rig that should be syncing (see `sync-health.ts`).
